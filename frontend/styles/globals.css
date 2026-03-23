@@ -1,28 +1,12 @@
 @import "tailwindcss";
 
-@theme {
+
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-accent: var(--accent);
   --color-muted: var(--muted);
-}
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-  --accent: #ffa500;
-  --muted: #f3f4f6;
-}
-
-/* NO @media block here - let the .dark class handle it */
-:root.dark {
-  --background: #0f172a;
-  --foreground: #f8fafc;
-  --muted: #1e293b;
-}
 
 body {
   background-color: var(--background);
   color: var(--foreground);
-  transition: background-color 0.2s ease;
-}

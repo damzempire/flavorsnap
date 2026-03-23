@@ -1,7 +1,6 @@
 
 
 
-
 @app.route('/predict', methods=['POST'])
 @limiter.limit("10 per minute")
 @track_inference
@@ -15,6 +14,7 @@ def predict():
     file = request.files['image']
     
     try:
+
 
 
 if __name__ == '__main__':
