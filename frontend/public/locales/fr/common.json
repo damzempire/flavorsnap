@@ -1,0 +1,21 @@
+{
+  "app_title": "FlavorSnap",
+  "snap_your_food": "Photographiez votre plat",
+  "open_camera": "Ouvrir la caméra",
+  "preview_alt": "Aperçu",
+  "uploading": "Téléchargement...",
+  "classifying": "Classification...",
+  "classify": "Classifier",
+  "result_label": "Prédiction",
+  "result_confidence": "Confiance",
+  "error_classification_failed": "La classification a échoué",
+  "error_something_wrong": "Quelque chose s'est mal passé",
+  "select_language": "Langue",
+  "language_en": "English",
+  "language_fr": "Français",
+  "language_ar": "العربية",
+  "language_yo": "Yorùbá",
+  "error_classify_retry": "Échec de la classification. Veuillez réessayer.",
+  "classify_food": "Classifier le plat",
+  "classification_result": "Résultat de la classification"
+}
