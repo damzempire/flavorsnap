@@ -148,7 +148,20 @@ flavorsnap/
 - **4GB+ RAM** for model loading
 - ~3GB disk space (PyTorch is large)
 
-### One-Command Setup
+### Docker Quick Start (Recommended)
+
+```bash
+# Clone and run with Docker
+git clone https://github.com/your-username/flavorsnap.git
+cd flavorsnap
+./scripts/docker_run.sh -e development -d
+
+# Access the application
+# Frontend: http://localhost:3000
+# Backend API: http://localhost:5000
+```
+
+### Traditional Setup
 
 ```bash
 # Clone and setup everything
@@ -316,6 +329,131 @@ The trained model (`model.pth`) should be in the project root. If you want to tr
 ```bash
 jupyter notebook train_model.ipynb
 # Follow the notebook instructions
+```
+
+## 🐳 Docker Configuration
+
+FlavorSnap provides comprehensive Docker support for containerized development and deployment.
+
+### 📋 Available Docker Files
+
+- **`Dockerfile`** - Multi-stage production container
+- **`Dockerfile.dev`** - Development backend container  
+- **`Dockerfile.frontend.dev`** - Development frontend container
+- **`docker-compose.yml`** - Development environment
+- **`docker-compose.prod.yml`** - Production environment
+- **`docker-compose.test.yml`** - Testing environment
+- **`.dockerignore`** - Docker ignore rules
+
+### 🚀 Docker Commands
+
+#### Development Environment
+
+```bash
+# Start development containers
+./scripts/docker_run.sh -e development -d
+
+# Build images only
+./scripts/docker_build.sh -e development
+
+# Start with custom scaling
+./scripts/docker_run.sh -e development --scale-frontend 2 --scale-backend 1
+
+# View logs
+docker-compose logs -f
+```
+
+#### Production Environment
+
+```bash
+# Start production stack
+./scripts/docker_run.sh -e production -d
+
+# Build and push to registry
+./scripts/docker_build.sh -e production --push
+
+# Scale services
+docker-compose -f docker-compose.prod.yml up --scale frontend=3 --scale backend=2
+```
+
+#### Testing Environment
+
+```bash
+# Run all tests
+./scripts/docker_run.sh -e test
+
+# Run specific test suites
+docker-compose -f docker-compose.test.yml run --rm integration-tests
+docker-compose -f docker-compose.test.yml run --rm e2e-tests
+```
+
+### 📊 Container Features
+
+#### Development Containers
+- **Hot Reloading**: Live code changes
+- **Debug Mode**: Enhanced logging
+- **Volume Mounts**: Local file synchronization
+- **Development Tools**: Testing, linting utilities
+
+#### Production Containers
+- **Multi-stage Builds**: Optimized image sizes
+- **Security Hardening**: Non-root users, minimal packages
+- **Health Checks**: Automated monitoring
+- **Resource Limits**: Memory and CPU constraints
+
+#### Testing Containers
+- **Isolated Environment**: Clean test execution
+- **Test Databases**: Temporary data storage
+- **Coverage Reporting**: Code quality metrics
+- **Performance Testing**: Load and stress tests
+
+### 🔧 Environment Variables
+
+Create `.env` file for Docker environments:
+
+```env
+# Production Environment Variables
+POSTGRES_DB=flavorsnap
+POSTGRES_USER=flavorsnap
+POSTGRES_PASSWORD=secure_password
+REDIS_PASSWORD=redis_password
+GRAFANA_PASSWORD=grafana_password
+
+# Application Configuration
+NODE_ENV=production
+MODEL_CONFIDENCE_THRESHOLD=0.6
+NEXT_PUBLIC_API_URL=http://backend:5000
+```
+
+### 📈 Monitoring & Observability
+
+Production Docker setup includes:
+
+- **Prometheus**: Metrics collection
+- **Grafana**: Visualization dashboards
+- **Health Checks**: Container monitoring
+- **Resource Limits**: CPU/memory constraints
+- **Log Aggregation**: Centralized logging
+
+### 🔒 Security Features
+
+- **Non-root Containers**: Secure by default
+- **Minimal Base Images**: Reduced attack surface
+- **Secret Management**: Environment variable protection
+- **Network Isolation**: Internal service communication
+
+### 🌐 Kubernetes Support
+
+For orchestration with Kubernetes:
+
+```bash
+# Deploy to Kubernetes
+kubectl apply -f kubernetes/deployment.yaml
+kubectl apply -f kubernetes/monitoring.yaml
+
+# Check deployment status
+kubectl get pods -n flavorsnap
+kubectl get services -n flavorsnap
 ```
 
 ## 🤝 Contributing
