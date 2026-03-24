@@ -1,3 +1,4 @@
+from src.ui import theme_manager
 import panel as pn
 import torch
 import torchvision.transforms as transforms
@@ -13,7 +14,8 @@ sys.path.append(os.path.abspath(os.path.dirname(__file__)))
 from src.ui.main_interface import MainInterface
 from src.ui.keyboard_manager import KeyboardManager
 
-pn.extension()
+# Configure Panel Extension and Theme Integration
+theme_manager.apply_to_app()
 
 # Inject JS for shortcuts natively
 with open('static/js/keyboard_shortcuts.js', 'r') as f:
@@ -144,6 +146,15 @@ def handle_shortcut(combo):
 ui = MainInterface(classify_fn=classify, save_image_fn=manual_export)
 keyboard_manager = KeyboardManager(handle_shortcut)
 
+# Header Section
+header = pn.Row(
+    pn.pane.Markdown("# 🍽️ FlavorSnap", styles={'margin-top': '0px', 'flex': '1'}),
+    theme_toggle,
+    sizing_mode='stretch_width',
+    css_classes=['header']
+)
+
+# Dashboard Layout
 app = pn.Column(
     shortcut_js,
     keyboard_manager.get_widget(),
