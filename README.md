@@ -19,6 +19,7 @@ Snap a picture of your food and let AI identify the dish instantly!
 - [🏗️ Project Structure](#️-project-structure)
 - [🛠️ Tech Stack](#️-tech-stack)
 - [🚀 Quick Start](#-quick-start)
+- [⚙️ Configuration](#️-configuration)
 - [📖 Detailed Setup](#-detailed-setup)
 - [🤝 Contributing](#-contributing)
 - [📝 API Documentation](#-api-documentation)
@@ -195,6 +196,71 @@ npm run dev
 cd ml-model-api
 pip install -r requirements.txt
 python app.py
+```
+
+## ⚙️ Configuration
+
+FlavorSnap uses a comprehensive configuration system with environment variables and YAML files. For detailed configuration information, see the [Configuration Guide](docs/configuration.md).
+
+### Environment Setup
+
+1. **Copy the environment template**:
+   ```bash
+   cp .env.example .env
+   ```
+
+2. **Configure essential variables**:
+   ```bash
+   # Application
+   NODE_ENV=development
+   DEBUG=true
+   
+   # Database
+   POSTGRES_HOST=localhost
+   POSTGRES_DB=flavorsnap
+   POSTGRES_USER=flavorsnap
+   POSTGRES_PASSWORD=your_secure_password
+   
+   # Security
+   JWT_SECRET=your_super_secret_jwt_key_here
+   
+   # Frontend
+   NEXT_PUBLIC_API_URL=http://localhost:5000
+   ```
+
+3. **Validate your configuration**:
+   ```bash
+   python scripts/validate_config.py --environment development
+   ```
+
+### Configuration Files
+
+- `config/default.yaml` - Default configuration values
+- `config/development.yaml` - Development-specific overrides
+- `config/production.yaml` - Production-specific overrides
+- `docs/configuration.md` - Comprehensive configuration documentation
+
+### Key Configuration Areas
+
+- **Database**: PostgreSQL and Redis settings
+- **Security**: JWT secrets, SSL certificates, and container security
+- **Resources**: CPU and memory limits for containers
+- **Monitoring**: Prometheus and Grafana configuration
+- **Features**: Feature flags for enabling/disabling functionality
+
+### Production Deployment
+
+For production deployment, ensure you:
+
+1. Set `NODE_ENV=production`
+2. Configure SSL certificates
+3. Use strong database passwords
+4. Enable monitoring and logging
+5. Review resource limits and autoscaling settings
+
+```bash
+# Validate production configuration
+python scripts/validate_config.py --environment production --check-ssl --check-database
 ```
 
 #### 4. Access Application
