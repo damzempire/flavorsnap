@@ -1,4 +1,4 @@
-from src.ui import theme_manager
+from src.ui import theme_manager, ImageViewer
 import panel as pn
 import torch
 import torchvision.transforms as transforms
@@ -9,6 +9,10 @@ import os
 
 # Configure Panel Extension and Theme Integration
 theme_manager.apply_to_app()
+pn.extension(
+    css_files=['static/css/image_viewer.css'],
+    js_files={'image_viewer': 'static/js/image_viewer.js'}
+)
 
 # Load model
 model_path = 'models/best_model.pth'
@@ -34,7 +38,7 @@ def save_image(image_obj, predicted_class, image_name="uploaded_image.jpg"):
 # Panel UI Components
 image_input = pn.widgets.FileInput(accept='image/*')
 output = pn.pane.Markdown("Upload an image of food 🍲")
-image_preview = pn.pane.Image(width=300, height=300, visible=False)
+image_preview = ImageViewer(visible=False)
 spinner = pn.indicators.LoadingSpinner(value=False, width=50)
 
 # Theme Toggle from ThemeManager
