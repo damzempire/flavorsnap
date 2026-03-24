@@ -19,6 +19,7 @@ Snap a picture of your food and let AI identify the dish instantly!
 - [🏗️ Project Structure](#️-project-structure)
 - [🛠️ Tech Stack](#️-tech-stack)
 - [🚀 Quick Start](#-quick-start)
+- [⚙️ Configuration](#️-configuration)
 - [📖 Detailed Setup](#-detailed-setup)
 - [🤝 Contributing](#-contributing)
 - [📝 API Documentation](#-api-documentation)
