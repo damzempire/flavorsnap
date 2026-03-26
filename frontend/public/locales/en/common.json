@@ -17,5 +17,8 @@
   "language_yo": "Yorùbá",
   "error_classify_retry": "Failed to classify image. Please try again.",
   "classify_food": "Classify Food",
-  "classification_result": "Classification Result"
+  "classification_result": "Classification Result",
+  "shortcut_hint": "Press 'O' to open camera, 'C' to classify, 'R' to reset",
+  "clear_image": "Clear Image",
+  "reset": "Reset"
 }

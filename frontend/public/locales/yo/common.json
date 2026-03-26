@@ -17,5 +17,8 @@
   "language_yo": "Yorùbá",
   "error_classify_retry": "Ìpínlẹ̀ àwòrán kùnà. Jọ̀wọ́ gbìyànjú lẹ́ẹ̀kan sí i.",
   "classify_food": "Pínlẹ̀ oúnjẹ",
-  "classification_result": "Àbájáde ìpínlẹ̀"
+  "classification_result": "Àbájáde ìpínlẹ̀",
+  "shortcut_hint": "Tẹ 'O' láti ṣí kámẹ́rà, 'C' láti pínlẹ̀ oúnjẹ, 'R' láti tun bẹrẹ",
+  "clear_image": "Pa àwòrán rẹ́",
+  "reset": "Tun bẹrẹ"
 }
