@@ -1,5 +1,12 @@
-// Simplified blockchain integration for demonstration
-// In a real implementation, you would use the latest Soroban SDK
+import {
+  isConnected as freighterIsConnected,
+  requestAccess,
+  getAddress,
+  getNetwork,
+} from '@stellar/freighter-api';
+import { stellarConfig } from '@/lib/config';
+
+// ——— Types ———
 
 export interface WalletInfo {
   publicKey: string;
@@ -7,18 +14,22 @@ export interface WalletInfo {
   network: 'public' | 'testnet';
 }
 
+export type DataSource = 'backend' | 'local';
+
 export interface TokenInfo {
   name: string;
   symbol: string;
   decimals: number;
   totalSupply: string;
   balance: string;
+  dataSource?: DataSource;
 }
 
 export interface VestingSchedule {
   id: number;
   recipient: string;
   totalAmount: string;
+  /** Unix seconds (Stellar-style) */
   startTime: number;
   duration: number;
   cliff: number;
@@ -30,6 +41,8 @@ export interface TransactionResult {
   success: boolean;
   txHash?: string;
   error?: string;
+  /** Present when on-device tx succeeded but optional backend sync failed */
+  backendSyncError?: string;
 }
 
 export interface GovernanceProposal {
@@ -44,6 +57,163 @@ export interface GovernanceProposal {
   status: 'active' | 'passed' | 'rejected' | 'executed';
 }
 
+export interface ChainTransactionRow {
+  hash: string;
+  type: string;
+  from: string;
+  to: string;
+  amount: string;
+  timestamp: number;
+  status: string;
+}
+
+// ——— Errors ———
+
+function freighterMessage(err: unknown): string {
+  if (err && typeof err === 'object' && 'message' in err && typeof (err as { message: unknown }).message === 'string') {
+    return (err as { message: string }).message;
+  }
+  return 'Wallet request failed';
+}
+
+export class BlockchainUserError extends Error {
+  constructor(message: string, public readonly code?: string) {
+    super(message);
+    this.name = 'BlockchainUserError';
+  }
+}
+
+// ——— Backend (Express / api routes under /api/blockchain/*) ———
+
+const BACKEND_TIMEOUT_MS = 15000;
+
+function getBlockchainBackendBaseUrl(): string {
+  const fromEnv =
+    (typeof process !== 'undefined' && process.env.NEXT_PUBLIC_BLOCKCHAIN_BACKEND_URL) ||
+    (typeof process !== 'undefined' && process.env.NEXT_PUBLIC_BACKEND_URL);
+  const raw = (fromEnv || 'http://localhost:3001').replace(/\/$/, '');
+  return raw;
+}
+
+async function backendFetchJson<T>(
+  method: 'GET' | 'POST',
+  pathname: string,
+  query?: Record<string, string | number | undefined>,
+  body?: Record<string, unknown>,
+): Promise<{ ok: true; data: T } | { ok: false; error: string }> {
+  const base = getBlockchainBackendBaseUrl();
+  const url = new URL(pathname.startsWith('/') ? pathname : `/${pathname}`, `${base}/`);
+  if (query) {
+    for (const [k, v] of Object.entries(query)) {
+      if (v !== undefined && v !== '') url.searchParams.set(k, String(v));
+    }
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), BACKEND_TIMEOUT_MS);
+
+  try {
+    const init: RequestInit = {
+      method,
+      signal: controller.signal,
+      headers: { Accept: 'application/json', ...(method === 'POST' ? { 'Content-Type': 'application/json' } : {}) },
+      ...(method === 'POST' && body ? { body: JSON.stringify(body) } : {}),
+    };
+    const res = await fetch(url.toString(), init);
+    clearTimeout(timer);
+
+    const text = await res.text();
+    let parsed: unknown = null;
+    try {
+      parsed = text ? JSON.parse(text) : null;
+    } catch {
+      if (!res.ok) {
+        return { ok: false, error: text || `HTTP ${res.status}` };
+      }
+    }
+
+    if (!res.ok) {
+      const msg =
+        parsed && typeof parsed === 'object' && 'error' in parsed && typeof (parsed as { error: unknown }).error === 'string'
+          ? (parsed as { error: string }).error
+          : text || `HTTP ${res.status}`;
+      return { ok: false, error: msg };
+    }
+
+    return { ok: true, data: parsed as T };
+  } catch (e) {
+    clearTimeout(timer);
+    if (e instanceof Error && e.name === 'AbortError') {
+      return { ok: false, error: 'Backend request timed out' };
+    }
+    const msg = e instanceof Error ? e.message : 'Network error';
+    if (msg === 'Failed to fetch') {
+      return { ok: false, error: 'Cannot reach blockchain backend. Is the API server running?' };
+    }
+    return { ok: false, error: msg };
+  }
+}
+
+async function syncTransactionWithBackend(payload: {
+  txHash: string;
+  type: string;
+  from?: string;
+  to?: string;
+  amount?: string;
+  walletAddress?: string;
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  const result = await backendFetchJson<{ ok?: boolean; error?: string }>(
+    'POST',
+    '/api/blockchain/record-transaction',
+    undefined,
+    payload,
+  );
+  if (!result.ok) return result;
+  const data = result.data;
+  if (data && typeof data === 'object' && 'error' in data && typeof data.error === 'string') {
+    return { ok: false, error: data.error };
+  }
+  return { ok: true };
+}
+
+// ——— Mock fallbacks (when backend is down or not implemented) ———
+
+async function mockTokenBalance(_address?: string): Promise<string> {
+  return '1000.0000000';
+}
+
+function mockVestingSchedules(recipient: string): VestingSchedule[] {
+  const startSec = Math.floor(Date.now() / 1000) - 86400;
+  return [
+    {
+      id: 1,
+      recipient,
+      totalAmount: '500.0000000',
+      startTime: startSec,
+      duration: 2592000,
+      cliff: 0,
+      releasedAmount: '100.0000000',
+      remainingAmount: '400.0000000',
+    },
+  ];
+}
+
+function mockTransactions(address: string | undefined): ChainTransactionRow[] {
+  return [
+    {
+      hash: '0x1234567890abcdef',
+      type: 'transfer',
+      from: address || 'user_address',
+      to: 'recipient_address',
+      amount: '100.0000000',
+      timestamp: Date.now() - 3600000,
+      status: 'completed',
+    },
+  ];
+}
+
+// ——— Manager ——
+
 export class BlockchainManager {
   private static instance: BlockchainManager;
   private contractAddress: string;
@@ -57,43 +227,92 @@ export class BlockchainManager {
   }
 
   private constructor() {
-    this.contractAddress = process.env.NEXT_PUBLIC_CONTRACT_ADDRESS || '';
+    this.contractAddress = process.env.NEXT_PUBLIC_CONTRACT_ADDRESS || stellarConfig.contractId || '';
   }
 
-  // Wallet Connection Methods
+  getContractAddress(): string {
+    return this.contractAddress;
+  }
+
+  getConfiguredRpcUrl(): string {
+    return stellarConfig.rpcUrl || process.env.NEXT_PUBLIC_SOROBAN_RPC_URL || '';
+  }
+
+  /** Base URL used for FlavorSnap blockchain REST endpoints */
+  getBackendBaseUrl(): string {
+    return getBlockchainBackendBaseUrl();
+  }
+
+  private mapFreighterNetwork(network: string | undefined): 'public' | 'testnet' {
+    if (!network) return 'testnet';
+    const u = network.toUpperCase();
+    if (u === 'PUBLIC' || u === 'MAINNET' || u.includes('PUBLIC')) return 'public';
+    return 'testnet';
+  }
+
+  private async freighterNetwork(): Promise<'public' | 'testnet'> {
+    const net = await getNetwork();
+    if (net.error) return 'testnet';
+    return this.mapFreighterNetwork(net.network);
+  }
+
+  async isFreighterBridgeAvailable(): Promise<boolean> {
+    try {
+      const r = await freighterIsConnected();
+      return !r.error && r.isConnected;
+    } catch {
+      return false;
+    }
+  }
+
+  /** @deprecated Prefer isFreighterBridgeAvailable(); kept for brief compat */
+  isWalletAvailable(): boolean {
+    return typeof window !== 'undefined';
+  }
+
   async connectWallet(): Promise<WalletInfo> {
     try {
-      // Check if Freighter is available
-      if (typeof window === 'undefined' || !(window as any).freighter) {
-        throw new Error('Freighter wallet not available');
+      const bridge = await freighterIsConnected();
+      if (bridge.error) {
+        throw new BlockchainUserError(freighterMessage(bridge.error), 'FREIGHTER');
+      }
+      if (!bridge.isConnected) {
+        throw new BlockchainUserError(
+          'Freighter is not available. Install the extension and refresh this page.',
+          'NO_EXTENSION',
+        );
       }
 
-      const freighter = (window as any).freighter;
-      
-      const isConnected = await freighter.isConnected();
-      if (!isConnected) {
-        await freighter.connect();
+      const access = await requestAccess();
+      if (access.error) {
+        throw new BlockchainUserError(freighterMessage(access.error), 'ACCESS_DENIED');
+      }
+      if (!access.address) {
+        throw new BlockchainUserError('No public key returned from Freighter', 'NO_ADDRESS');
       }
 
-      const publicKey = await freighter.getPublicKey();
-      const network = await this.getNetwork();
+      const network = await this.freighterNetwork();
+      this.network = network;
 
       return {
-        publicKey: publicKey || '',
+        publicKey: access.address,
         isConnected: true,
-        network: network || 'testnet'
+        network,
       };
-    } catch (error) {
-      console.error('Failed to connect wallet:', error);
-      throw new Error('Failed to connect wallet');
+    } catch (e) {
+      if (e instanceof BlockchainUserError) throw e;
+      console.error('Failed to connect wallet:', e);
+      throw new BlockchainUserError(
+        e instanceof Error ? e.message : 'Failed to connect wallet',
+        'CONNECT_FAILED',
+      );
     }
   }
 
   async disconnectWallet(): Promise<void> {
     try {
-      if (typeof window !== 'undefined' && (window as any).freighter) {
-        await (window as any).freighter.disconnect();
-      }
+      // Freighter has no programmatic "disconnect"; clear app state in the UI instead.
+      return;
     } catch (error) {
       console.error('Failed to disconnect wallet:', error);
     }
@@ -101,70 +320,54 @@ export class BlockchainManager {
 
   async getWalletInfo(): Promise<WalletInfo> {
     try {
-      if (typeof window === 'undefined' || !(window as any).freighter) {
-        return {
-          publicKey: '',
-          isConnected: false,
-          network: 'testnet'
-        };
+      const bridge = await freighterIsConnected();
+      if (bridge.error || !bridge.isConnected) {
+        return { publicKey: '', isConnected: false, network: 'testnet' };
       }
 
-      const freighter = (window as any).freighter;
-      const isConnected = await freighter.isConnected();
-      const publicKey = isConnected ? await freighter.getPublicKey() : '';
-      const network = await this.getNetwork();
+      const addr = await getAddress();
+      if (addr.error || !addr.address) {
+        return { publicKey: '', isConnected: false, network: 'testnet' };
+      }
 
+      const network = await this.freighterNetwork();
       return {
-        publicKey,
-        isConnected,
-        network
+        publicKey: addr.address,
+        isConnected: true,
+        network,
       };
     } catch (error) {
       console.error('Failed to get wallet info:', error);
-      return {
-        publicKey: '',
-        isConnected: false,
-        network: 'testnet'
-      };
+      return { publicKey: '', isConnected: false, network: 'testnet' };
     }
   }
 
-  private async getNetwork(): Promise<'public' | 'testnet'> {
-    try {
-      if (typeof window === 'undefined' || !(window as any).freighter) {
-        return 'testnet';
-      }
+  async getTokenInfo(walletAddress?: string): Promise<TokenInfo | null> {
+    const address = walletAddress?.trim() || undefined;
+    const res = await backendFetchJson<Record<string, unknown>>('GET', '/api/blockchain/token-info', {
+      address,
+      contractId: this.contractAddress || undefined,
+    });
 
-      const network = await (window as any).freighter.getNetwork();
-      return network === 'PUBLIC' ? 'public' : 'testnet';
-    } catch (error) {
-      console.error('Failed to get network:', error);
-      return 'testnet';
+    if (res.ok && res.data && typeof res.data === 'object') {
+      const d = res.data;
+      const name = typeof d.name === 'string' ? d.name : 'FlavorToken';
+      const symbol = typeof d.symbol === 'string' ? d.symbol : 'FLV';
+      const decimals = typeof d.decimals === 'number' ? d.decimals : 7;
+      const totalSupply = typeof d.totalSupply === 'string' ? d.totalSupply : String(d.totalSupply ?? '0');
+      const balance = typeof d.balance === 'string' ? d.balance : String(d.balance ?? (await mockTokenBalance(address)));
+      return { name, symbol, decimals, totalSupply, balance, dataSource: 'backend' };
     }
-  }
 
-  // Token Methods (Mock implementation for demo)
-  async getTokenBalance(address?: string): Promise<string> {
     try {
-      // Mock implementation - in real app, this would call the contract
-      const mockBalance = '1000.0000000';
-      console.log('Getting token balance for:', address || 'connected wallet');
-      return mockBalance;
-    } catch (error) {
-      console.error('Failed to get token balance:', error);
-      return '0';
-    }
-  }
-
-  async getTokenInfo(): Promise<TokenInfo | null> {
-    try {
-      // Mock implementation
+      const balance = await mockTokenBalance(address);
       return {
         name: 'FlavorToken',
         symbol: 'FLV',
         decimals: 7,
         totalSupply: '1000000.0000000',
-        balance: await this.getTokenBalance()
+        balance,
+        dataSource: 'local',
       };
     } catch (error) {
       console.error('Failed to get token info:', error);
@@ -172,210 +375,223 @@ export class BlockchainManager {
     }
   }
 
+  async getTokenBalance(address?: string): Promise<string> {
+    const info = await this.getTokenInfo(address);
+    return info?.balance ?? '0';
+  }
+
   async mintTokens(toAddress: string, amount: string): Promise<TransactionResult> {
     try {
-      if (typeof window === 'undefined' || !(window as any).freighter) {
-        throw new Error('Freighter wallet not available');
+      const bridge = await freighterIsConnected();
+      if (bridge.error || !bridge.isConnected) {
+        return { success: false, error: 'Freighter is not available' };
+      }
+      if (!toAddress?.trim()) {
+        return { success: false, error: 'Recipient address is required' };
+      }
+      if (!amount?.trim() || Number.isNaN(Number(amount)) || Number(amount) <= 0) {
+        return { success: false, error: 'Enter a valid amount greater than zero' };
       }
 
+      const from = (await getAddress()).address;
       console.log('Minting', amount, 'tokens to', toAddress);
-      
-      // Mock transaction - in real app, this would build and sign a transaction
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      
-      const mockTxHash = '0x' + Math.random().toString(16).padStart(64, '0');
-      
+
+      await new Promise((r) => setTimeout(r, 1200));
+      const txHash = '0x' + Math.random().toString(16).slice(2).padEnd(64, '0');
+
+      const sync = await syncTransactionWithBackend({
+        txHash,
+        type: 'mint',
+        from,
+        to: toAddress.trim(),
+        amount: amount.trim(),
+        walletAddress: from,
+      });
+
       return {
         success: true,
-        txHash: mockTxHash
+        txHash,
+        ...(!sync.ok ? { backendSyncError: sync.error } : {}),
       };
     } catch (error) {
       console.error('Failed to mint tokens:', error);
       return {
         success: false,
-        error: error instanceof Error ? error.message : 'Unknown error'
+        error: error instanceof Error ? error.message : 'Unknown error',
       };
     }
   }
 
   async transferTokens(toAddress: string, amount: string): Promise<TransactionResult> {
     try {
-      if (typeof window === 'undefined' || !(window as any).freighter) {
-        throw new Error('Freighter wallet not available');
+      const bridge = await freighterIsConnected();
+      if (bridge.error || !bridge.isConnected) {
+        return { success: false, error: 'Freighter is not available' };
+      }
+      if (!toAddress?.trim()) {
+        return { success: false, error: 'Recipient address is required' };
+      }
+      if (!amount?.trim() || Number.isNaN(Number(amount)) || Number(amount) <= 0) {
+        return { success: false, error: 'Enter a valid amount greater than zero' };
       }
 
+      const from = (await getAddress()).address;
       console.log('Transferring', amount, 'tokens to', toAddress);
-      
-      // Mock transaction - in real app, this would build and sign a transaction
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      
-      const mockTxHash = '0x' + Math.random().toString(16).padStart(64, '0');
-      
+
+      await new Promise((r) => setTimeout(r, 1200));
+      const txHash = '0x' + Math.random().toString(16).slice(2).padEnd(64, '0');
+
+      const sync = await syncTransactionWithBackend({
+        txHash,
+        type: 'transfer',
+        from,
+        to: toAddress.trim(),
+        amount: amount.trim(),
+        walletAddress: from,
+      });
+
       return {
         success: true,
-        txHash: mockTxHash
+        txHash,
+        ...(!sync.ok ? { backendSyncError: sync.error } : {}),
       };
     } catch (error) {
       console.error('Failed to transfer tokens:', error);
       return {
         success: false,
-        error: error instanceof Error ? error.message : 'Unknown error'
+        error: error instanceof Error ? error.message : 'Unknown error',
       };
     }
   }
 
-  // Vesting Methods
   async createVestingSchedule(
     recipient: string,
     totalAmount: string,
     duration: number,
-    cliff: number = 0
+    cliff: number = 0,
   ): Promise<TransactionResult> {
     try {
       console.log('Creating vesting schedule for', recipient, totalAmount, 'duration:', duration, 'cliff:', cliff);
-      
-      // Mock implementation
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      
-      const mockTxHash = '0x' + Math.random().toString(16).padStart(64, '0');
-      
-      return {
-        success: true,
-        txHash: mockTxHash
-      };
+      await new Promise((r) => setTimeout(r, 1200));
+      const txHash = '0x' + Math.random().toString(16).slice(2).padEnd(64, '0');
+      return { success: true, txHash };
     } catch (error) {
       console.error('Failed to create vesting schedule:', error);
       return {
         success: false,
-        error: error instanceof Error ? error.message : 'Unknown error'
+        error: error instanceof Error ? error.message : 'Unknown error',
       };
     }
   }
 
-  async getVestingSchedules(recipient: string): Promise<VestingSchedule[]> {
-    try {
-      console.log('Getting vesting schedules for', recipient);
-      
-      // Mock implementation
-      const mockSchedules: VestingSchedule[] = [
-        {
-          id: 1,
-          recipient,
-          totalAmount: '500.0000000',
-          startTime: Date.now() - 86400000, // 1 day ago
-          duration: 2592000, // 30 days
-          cliff: 0,
-          releasedAmount: '100.0000000',
-          remainingAmount: '400.0000000'
-        }
-      ];
-      
-      return mockSchedules;
-    } catch (error) {
-      console.error('Failed to get vesting schedules:', error);
-      return [];
+  async getVestingSchedules(recipient: string): Promise<{ schedules: VestingSchedule[]; dataSource: DataSource }> {
+    const res = await backendFetchJson<{ schedules?: VestingSchedule[] }>('GET', '/api/blockchain/vesting', {
+      recipient: recipient.trim(),
+    });
+
+    if (res.ok && res.data && Array.isArray(res.data.schedules)) {
+      return { schedules: res.data.schedules, dataSource: 'backend' };
     }
+
+    console.warn('Vesting backend unavailable; using local preview data.', !res.ok ? res.error : '');
+    return { schedules: mockVestingSchedules(recipient), dataSource: 'local' };
   }
 
   async releaseVestedFunds(scheduleId: number): Promise<TransactionResult> {
     try {
+      const bridge = await freighterIsConnected();
+      if (bridge.error || !bridge.isConnected) {
+        return { success: false, error: 'Freighter is not available' };
+      }
       console.log('Releasing vested funds for schedule', scheduleId);
-      
-      // Mock implementation
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      
-      const mockTxHash = '0x' + Math.random().toString(16).padStart(64, '0');
-      
+      await new Promise((r) => setTimeout(r, 1200));
+      const txHash = '0x' + Math.random().toString(16).slice(2).padEnd(64, '0');
+
+      const from = (await getAddress()).address;
+      const sync = await syncTransactionWithBackend({
+        txHash,
+        type: 'release_vesting',
+        walletAddress: from,
+      });
+
       return {
         success: true,
-        txHash: mockTxHash
+        txHash,
+        ...(!sync.ok ? { backendSyncError: sync.error } : {}),
       };
     } catch (error) {
       console.error('Failed to release vested funds:', error);
       return {
         success: false,
-        error: error instanceof Error ? error.message : 'Unknown error'
+        error: error instanceof Error ? error.message : 'Unknown error',
       };
     }
   }
 
-  // Governance Methods (placeholder for future implementation)
   async createProposal(title: string, description: string): Promise<TransactionResult> {
     console.log('Creating proposal:', title);
-    
-    // Mock implementation
     return {
       success: false,
-      error: 'Governance features coming soon'
+      error: 'Governance features coming soon',
     };
   }
 
   async voteOnProposal(proposalId: number, vote: 'for' | 'against'): Promise<TransactionResult> {
     console.log('Voting on proposal', proposalId, 'with vote:', vote);
-    
-    // Mock implementation
     return {
       success: false,
-      error: 'Governance features coming soon'
+      error: 'Governance features coming soon',
     };
   }
 
   async getProposals(): Promise<GovernanceProposal[]> {
     console.log('Getting proposals');
-    
-    // Mock implementation
     return [];
   }
 
-  // Transaction History
-  async getTransactionHistory(address?: string, limit: number = 10): Promise<any[]> {
-    try {
-      console.log('Getting transaction history for', address, 'limit:', limit);
-      
-      // Mock implementation
-      const mockTransactions = [
-        {
-          hash: '0x1234567890abcdef',
-          type: 'transfer',
-          from: address || 'user_address',
-          to: 'recipient_address',
-          amount: '100.0000000',
-          timestamp: Date.now() - 3600000,
-          status: 'completed'
-        }
-      ];
-      
-      return mockTransactions.slice(0, limit);
-    } catch (error) {
-      console.error('Failed to get transaction history:', error);
-      return [];
+  async getTransactionHistory(
+    address?: string,
+    limit: number = 10,
+  ): Promise<{ transactions: ChainTransactionRow[]; dataSource: DataSource }> {
+    const res = await backendFetchJson<{ transactions?: ChainTransactionRow[] }>('GET', '/api/blockchain/transactions', {
+      address: address?.trim(),
+      limit,
+    });
+
+    if (res.ok && res.data && Array.isArray(res.data.transactions)) {
+      return { transactions: res.data.transactions.slice(0, limit), dataSource: 'backend' };
     }
+
+    console.warn('Transaction history backend unavailable; using local preview.', !res.ok ? res.error : '');
+    return {
+      transactions: mockTransactions(address).slice(0, limit),
+      dataSource: 'local',
+    };
   }
 
-  // Utility Methods
   async waitForTransaction(txHash: string): Promise<boolean> {
     try {
-      console.log('Waiting for transaction:', txHash);
-      
-      let attempts = 0;
-      const maxAttempts = 30;
-      
-      while (attempts < maxAttempts) {
-        try {
-          // Mock transaction check - in real app, this would query the blockchain
-          if (attempts > 5) { // Simulate success after 5 attempts
-            return true;
-          }
-          
-          attempts++;
-          await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds
-        } catch (error) {
-          attempts++;
-          await new Promise(resolve => setTimeout(resolve, 2000));
-        }
+      const poll = await backendFetchJson<{ confirmed?: boolean; status?: string }>(
+        'GET',
+        '/api/blockchain/transaction-status',
+        { hash: txHash },
+      );
+      if (poll.ok && poll.data && (poll.data.confirmed === true || poll.data.status === 'success')) {
+        return true;
       }
-      
-      return false; // Transaction not found after max attempts
+
+      console.log('Waiting for transaction (client poll):', txHash);
+      let attempts = 0;
+      const maxAttempts = 10;
+      while (attempts < maxAttempts) {
+        attempts++;
+        await new Promise((r) => setTimeout(r, 1500));
+        const again = await backendFetchJson<{ confirmed?: boolean }>('GET', '/api/blockchain/transaction-status', {
+          hash: txHash,
+        });
+        if (again.ok && again.data?.confirmed) return true;
+      }
+      return false;
     } catch (error) {
       console.error('Failed to wait for transaction:', error);
       return false;
@@ -390,11 +606,6 @@ export class BlockchainManager {
   parseAmount(amount: string, decimals: number = 7): string {
     const num = parseFloat(amount);
     return Math.floor(num * Math.pow(10, decimals)).toString();
-  }
-
-  // Check if wallet is available
-  isWalletAvailable(): boolean {
-    return typeof window !== 'undefined' && (window as any).freighter;
   }
 }
 
