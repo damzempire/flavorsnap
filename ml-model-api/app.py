@@ -142,6 +142,7 @@ def predict():
 @app.route('/health', methods=['GET'])
 @limiter.exempt
 def health_check():
+    """Comprehensive health check endpoint"""
     try:
         # Get detailed health from monitoring middleware
         if hasattr(monitoring_middleware, '_get_detailed_health'):
@@ -153,10 +154,55 @@ def health_check():
                 'monitoring': 'basic'
             }
         
+        # Perform quick dependency checks
+        overall_status = 'healthy'
+        checks = {}
+        
+        # Check model file
+        model_exists = os.path.exists('model.pth')
+        checks['model'] = 'available' if model_exists else 'missing'
+        if not model_exists:
+            overall_status = 'degraded'
+        
+        # Check database connectivity
+        try:
+            import sqlite3
+            conn = sqlite3.connect('predictions.db', timeout=2)
+            conn.close()
+            checks['database'] = 'connected'
+        except Exception:
+            checks['database'] = 'disconnected'
+            overall_status = 'degraded'
+        
+        # Check Redis if configured
+        if os.environ.get('REDIS_URL'):
+            try:
+                import redis
+                r = redis.from_url(os.environ.get('REDIS_URL'), socket_timeout=2)
+                r.ping()
+                checks['redis'] = 'connected'
+            except Exception:
+                checks['redis'] = 'disconnected'
+                overall_status = 'degraded'
+        
+        # Update health check status metric
+        if hasattr(monitoring_middleware, 'HEALTH_CHECK_STATUS'):
+            monitoring_middleware.HEALTH_CHECK_STATUS.set(1 if overall_status == 'healthy' else 0)
+        
         return jsonify({
-            'status': 'healthy',
+            'status': overall_status,
             'timestamp': datetime.now().isoformat(),
             'version': '2.0.0',
+            'checks': checks,
+            'endpoints': {
+                'basic': '/health',
+                'detailed': '/health/detailed',
+                'database': '/health/database',
+                'redis': '/health/redis',
+                'model': '/health/model',
+                'system': '/health/system',
+                'dependencies': '/health/dependencies'
+            },
             'security': {
                 'rate_limiting': True,
                 'api_key_auth': True,
@@ -166,15 +212,16 @@ def health_check():
             'monitoring': {
                 'enabled': True,
                 'metrics_endpoint': '/metrics',
-                'dashboard_endpoint': '/dashboard',
-                'detailed_health_endpoint': '/health/detailed'
+                'dashboard_endpoint': '/dashboard'
             },
             'detailed_metrics': detailed_health
         })
     except Exception as e:
         logger.error(f"Health check error: {e}")
+        if hasattr(monitoring_middleware, 'HEALTH_CHECK_STATUS'):
+            monitoring_middleware.HEALTH_CHECK_STATUS.set(0)
         return jsonify({
-            'status': 'degraded',
+            'status': 'unhealthy',
             'timestamp': datetime.now().isoformat(),
             'error': str(e)
         }), 500
@@ -188,12 +235,38 @@ def api_info():
         'version': '2.0.0',
         'endpoints': {
             'predict': 'POST /predict - Food classification',
-            'health': 'GET /health - Health check',
+            'health': 'GET /health - Basic health check',
             'health_detailed': 'GET /health/detailed - Detailed health metrics',
+            'health_database': 'GET /health/database - Database connectivity check',
+            'health_redis': 'GET /health/redis - Redis connectivity check',
+            'health_model': 'GET /health/model - ML model status check',
+            'health_system': 'GET /health/system - System resources check',
+            'health_dependencies': 'GET /health/dependencies - Dependencies check',
             'metrics': 'GET /metrics - Prometheus metrics',
             'dashboard': 'GET /dashboard - Performance dashboard',
             'info': 'GET /api/info - API information',
             'admin_api_key': 'POST /admin/api-key/generate - Generate API key'
+        },
+        'health_checks': {
+            'basic': {
+                'endpoint': '/health',
+                'description': 'Overall system health status',
+                'response_time': '< 100ms',
+                'includes': ['model_status', 'database_connectivity', 'redis_status']
+            },
+            'detailed': {
+                'endpoint': '/health/detailed',
+                'description': 'Comprehensive system metrics',
+                'response_time': '< 500ms',
+                'includes': ['system_resources', 'gpu_status', 'model_metrics']
+            },
+            'specialized': {
+                'database': '/health/database - Database performance and connectivity',
+                'redis': '/health/redis - Redis connection and metrics',
+                'model': '/health/model - ML model loading and inference metrics',
+                'system': '/health/system - CPU, memory, disk, network metrics',
+                'dependencies': '/health/dependencies - Package versions and environment'
+            }
         },
         'security': {
             'rate_limiting': 'enabled',
@@ -210,7 +283,8 @@ def api_info():
             'prometheus_metrics': True,
             'performance_dashboard': True,
             'system_metrics': ['cpu', 'memory', 'gpu', 'disk'],
-            'application_metrics': ['requests', 'response_time', 'inference_metrics', 'error_rate']
+            'application_metrics': ['requests', 'response_time', 'inference_metrics', 'error_rate'],
+            'health_check_metrics': ['dependency_status', 'resource_usage', 'model_performance']
         }
     })
 
