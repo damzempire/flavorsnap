@@ -11,152 +11,12 @@ from PIL import Image
 import io
 import os
 import sys
-from pathlib import Path
-from datetime import datetime
-import hashlib
-from datetime import datetime
+
 
 # Ensure src module is visible
 sys.path.append(os.path.abspath(os.path.dirname(__file__)))
 
-from src.ui.main_interface import MainInterface
-from src.ui.keyboard_manager import KeyboardManager
 
-# Configure Panel Extension and Theme Integration
-theme_manager.apply_to_app()
-pn.extension(
-    css_files=['static/css/image_viewer.css', 'static/css/loading.css'],
-    js_files={
-        'image_viewer': 'static/js/image_viewer.js',
-        'progress_tracker': 'static/js/progress_tracker.js',
-        'realtime': 'static/js/realtime.js'
-    }
-)
-
-# Inject JS for shortcuts natively
-with open('static/js/keyboard_shortcuts.js', 'r') as f:
-    js_code = f.read()
-
-# Custom CSS and the injected script
-shortcut_js = pn.pane.HTML(
-    f"<style>.keyboard-target {{ display: none !important; }}</style><script>{js_code}</script>",
-    width=0, height=0, margin=0, sizing_mode='fixed'
-)
-
-# Add src to Python path for imports
-from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent / 'src'))
-
-from src.ui.preprocessing_controls import PreprocessingControls
-from src.ui.confidence_chart import create_confidence_chart
-from src.ui.error_messages import handle_and_display_error, create_error_banner, setup_error_styles
-from src.core.image_enhancer import ImageEnhancer
-from src.core.classifier import FlavorSnapClassifier
-from src.utils.error_handler import handle_user_errors, validate_image_file, UserFriendlyError
-from src.pwa.offline_manager import PWAManager
-
-# Configure Panel extensions with custom CSS and JS
-pn.extension('css', js_files={
-    'charts': ['static/js/charts.js'],
-    'pwa': ['static/js/pwa.js']
-}, css_files={
-    'charts': ['static/css/charts.css'],
-    'error': ['static/css/error.css'],
-    'pwa': ['static/css/pwa.css']
-})
-
-# Initialize PWA Manager
-pwa_manager = PWAManager("offline_data.db")
-
-# PWA JavaScript template for service worker registration
-pwa_js_template = """
-<script>
-// Register Service Worker
-if ('serviceWorker' in navigator) {
-    window.addEventListener('load', () => {
-        navigator.serviceWorker.register('/static/sw.js')
-            .then((registration) => {
-                console.log('SW registered: ', registration);
-                
-                // Check for updates
-                registration.addEventListener('updatefound', () => {
-                    const newWorker = registration.installing;
-                    newWorker.addEventListener('statechange', () => {
-                        if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-                            // New content is available
-                            if (confirm('New version available! Reload to update?')) {
-                                window.location.reload();
-                            }
-                        }
-                    });
-                });
-            })
-            .catch((registrationError) => {
-                console.log('SW registration failed: ', registrationError);
-            });
-    });
-}
-
-// PWA Install Prompt
-let deferredPrompt;
-window.addEventListener('beforeinstallprompt', (e) => {
-    e.preventDefault();
-    deferredPrompt = e;
-    
-    // Show install button or banner
-    const installButton = document.getElementById('pwa-install-button');
-    if (installButton) {
-        installButton.style.display = 'block';
-        installButton.addEventListener('click', () => {
-            deferredPrompt.prompt();
-            deferredPrompt.userChoice.then((choiceResult) => {
-                if (choiceResult.outcome === 'accepted') {
-                    console.log('User accepted the A2HS prompt');
-                } else {
-                    console.log('User dismissed the A2HS prompt');
-                }
-                deferredPrompt = null;
-            });
-        });
-    }
-});
-
-// Online/Offline Status Detection
-window.addEventListener('online', () => {
-    console.log('App is online');
-    document.body.classList.remove('offline');
-    
-    // Notify the server about online status
-    fetch('/api/pwa/status', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({online: true})
-    }).catch(console.error);
-});
-
-window.addEventListener('offline', () => {
-    console.log('App is offline');
-    document.body.classList.add('offline');
-    
-    // Notify the server about offline status
-    fetch('/api/pwa/status', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({online: false})
-    }).catch(console.error);
-});
-
-// Initialize PWA status
-if (!navigator.onLine) {
-    document.body.classList.add('offline');
-}
-</script>
-"""
-
-# Load model using the enhanced classifier
-classifier = FlavorSnapClassifier()
-model = classifier.model
-class_names = classifier.class_names
 
 # Transforms
 transform = transforms.Compose([
@@ -166,79 +26,11 @@ transform = transforms.Compose([
 
 # Save image to correct folder
 def save_image(image_obj, predicted_class, image_name="uploaded_image.jpg"):
-    save_dir = f"data/train/{predicted_class}"
+    save_dir = os.path.join(upload_dir, predicted_class)
     os.makedirs(save_dir, exist_ok=True)
     image_path = os.path.join(save_dir, image_name)
     image_obj.save(image_path)
-    
-    # Log analytics event for PWA
-    if pwa_manager:
-        pwa_manager.offline_manager.log_analytics_event('classification', {
-            'predicted_class': predicted_class,
-            'image_name': image_name,
-            'timestamp': datetime.now().isoformat()
-        })
 
-# PWA API endpoint handlers
-def handle_pwa_status(request):
-    """Handle PWA status updates from client."""
-    try:
-        data = request.json()
-        is_online = data.get('online', True)
-        
-        if pwa_manager:
-            pwa_manager.set_online_status(is_online)
-        
-        return {'status': 'success', 'online': is_online}
-    except Exception as e:
-        return {'status': 'error', 'message': str(e)}
-
-def handle_pwa_sync(request):
-    """Handle PWA sync requests."""
-    try:
-        if not pwa_manager:
-            return {'status': 'error', 'message': 'PWA manager not available'}
-        
-        # Get pending sync items
-        pending_items = pwa_manager.offline_manager.get_sync_queue('pending')
-        
-        # Process sync items
-        synced_count = 0
-        for item in pending_items:
-            success = pwa_manager._process_sync_item(item)
-            if success:
-                pwa_manager.offline_manager.mark_synced(item['id'], 'synced')
-                synced_count += 1
-        
-        return {
-            'status': 'success',
-            'synced_items': synced_count,
-            'pending_items': len(pending_items) - synced_count
-        }
-    except Exception as e:
-        return {'status': 'error', 'message': str(e)}
-
-def handle_pwa_cache(request):
-    """Handle PWA cache requests."""
-    try:
-        if not pwa_manager:
-            return {'status': 'error', 'message': 'PWA manager not available'}
-        
-        # Get cache statistics
-        stats = pwa_manager.get_status()
-        
-        return {
-            'status': 'success',
-            'cache_stats': stats
-        }
-    except Exception as e:
-        return {'status': 'error', 'message': str(e)}
-
-# State variables
-current_image = None
-current_predicted_class = None
-current_confidence = 0.0
-classification_history = []
 
 # Panel UI
 image_input = pn.widgets.FileInput(accept='image/*')
@@ -326,19 +118,6 @@ def classify(event=None):
         processed_preview.visible = False
         return
     
-    if processed_image is None:
-        output.object = "⚠️ Please wait for image to load or apply preprocessing."
-        return
-    
-    # Clear any previous errors
-    error_banner.visible = False
-    
-    # Start spinner
-    spinner.value = True
-    output.object = "🔍 Classifying..."
-
-    # Use processed image for classification
-    image_to_classify = processed_image
 
     # Get preprocessing parameters
     preprocessing_params = preprocessing_controls.get_enhancement_params()
@@ -373,73 +152,11 @@ def classify(event=None):
     # Update confidence chart with all probabilities
     confidence_chart.update_predictions(all_probabilities, predicted_class)
 
-    # Save processed image
-    save_image(image_to_classify, predicted_class)
-    
-    # Create enhanced result message
-    confidence_percentage = confidence_score * 100
-    entropy = result['metadata']['entropy']
-    avg_confidence = result['metadata']['average_confidence']
-    
-    # Add offline status indicator
-    offline_indicator = "📱 (Offline Mode)" if pwa_manager and not pwa_manager.is_online else "🌐 (Online)"
-    
-    result_message = f"""
-✅ **Classification Result: {predicted_class}** {offline_indicator}
 
-### 🎯 Confidence Scores
-    try:
         # Start spinner
         spinner.value = True
         output.object = "🔍 Classifying..."
 
-        # Use processed image for classification
-        image_to_classify = processed_image
-
-        # Get preprocessing parameters
-        preprocessing_params = preprocessing_controls.get_enhancement_params()
-
-        # Use enhanced classifier for detailed results
-        result = classifier.classify_image(image_to_classify, preprocessing_params)
-        
-        # Extract results
-        predicted_class = result['predicted_class']
-        confidence_score = result['confidence']
-        all_probabilities = result['all_probabilities']
-        
-        # Update confidence chart with all probabilities
-        confidence_chart.update_predictions(all_probabilities, predicted_class)
-
-        # Save processed image
-        save_image(image_to_classify, predicted_class)
-        
-        # Create enhanced result message
-        confidence_percentage = confidence_score * 100
-        entropy = result['metadata']['entropy']
-        avg_confidence = result['metadata']['average_confidence']
-        
-        result_message = f"""
-**Classification Result: {predicted_class}**
-
-### Confidence Scores
-- **Top Prediction:** {predicted_class} ({confidence_percentage:.1f}%)
-- **Model Uncertainty (Entropy):** {entropy:.3f}
-- **Average Confidence:** {avg_confidence:.1f}%
-
-### Preprocessing Parameters Applied:
-- **Brightness**: {preprocessing_params['brightness']:.1f}
-- **Contrast**: {preprocessing_params['contrast']:.1f}
-- **Rotation**: {preprocessing_params['rotation']:.0f}°
-- **Aspect Ratio**: {preprocessing_params.get('aspect_ratio', 'Original')}
-- **Crop**: {preprocessing_params.get('crop_box', 'None')}
-
-Processed image saved to training data!
-
-**View the confidence chart below** to see probabilities for all food classes.
-        """
-        
-        output.object = result_message
-        spinner.value = False
 
     except Exception as e:
         output.object = f"❌ Error: {str(e)}"
