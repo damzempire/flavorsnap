@@ -1,7 +1,12 @@
+from src.ui import theme_manager, ImageViewer, LoadingUI, SkeletonCard
+from src.core import ProgressClassifier
+from src.utils.memory_manager import MemoryManager
+from src.ui.export_panel import ExportPanel
+from src.ui.realtime_preview import RealtimePreview
 import panel as pn
 import torch
+import torchvision.models as models
 import torchvision.transforms as transforms
-from torchvision import models
 from PIL import Image
 import io
 import os
@@ -9,8 +14,37 @@ import sys
 from pathlib import Path
 from datetime import datetime
 import hashlib
+from datetime import datetime
+
+# Ensure src module is visible
+sys.path.append(os.path.abspath(os.path.dirname(__file__)))
+
+from src.ui.main_interface import MainInterface
+from src.ui.keyboard_manager import KeyboardManager
+
+# Configure Panel Extension and Theme Integration
+theme_manager.apply_to_app()
+pn.extension(
+    css_files=['static/css/image_viewer.css', 'static/css/loading.css'],
+    js_files={
+        'image_viewer': 'static/js/image_viewer.js',
+        'progress_tracker': 'static/js/progress_tracker.js',
+        'realtime': 'static/js/realtime.js'
+    }
+)
+
+# Inject JS for shortcuts natively
+with open('static/js/keyboard_shortcuts.js', 'r') as f:
+    js_code = f.read()
+
+# Custom CSS and the injected script
+shortcut_js = pn.pane.HTML(
+    f"<style>.keyboard-target {{ display: none !important; }}</style><script>{js_code}</script>",
+    width=0, height=0, margin=0, sizing_mode='fixed'
+)
 
 # Add src to Python path for imports
+from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent / 'src'))
 
 from src.ui.preprocessing_controls import PreprocessingControls
@@ -200,6 +234,12 @@ def handle_pwa_cache(request):
     except Exception as e:
         return {'status': 'error', 'message': str(e)}
 
+# State variables
+current_image = None
+current_predicted_class = None
+current_confidence = 0.0
+classification_history = []
+
 # Panel UI
 image_input = pn.widgets.FileInput(accept='image/*')
 output = pn.pane.Markdown("Upload an image of food 🍲")
@@ -219,6 +259,10 @@ confidence_chart_component = confidence_chart.create_layout()
 preprocessing_controls = PreprocessingControls()
 preprocessing_panel = preprocessing_controls.create_layout()
 
+# Real-time preview component
+realtime_preview = RealtimePreview()
+realtime_preview_panel = realtime_preview.create_layout()
+
 # Global variables
 original_image = None
 processed_image = None
@@ -230,6 +274,13 @@ def on_image_update(image):
     if image:
         processed_preview.object = image
         processed_preview.visible = True
+
+def on_realtime_update(image, preprocessing_params):
+    """Handle real-time classification updates."""
+    global processed_image
+    if image and realtime_preview.realtime_enabled:
+        processed_image = image
+        realtime_preview.update_image(original_image, image, preprocessing_params)
 
 @handle_user_errors("image upload and processing")
 def handle_image_upload():
@@ -260,6 +311,7 @@ def handle_image_upload():
     # Load image into preprocessing controls
     preprocessing_controls.load_image(original_image)
     preprocessing_controls.on_image_update = on_image_update
+    preprocessing_controls.set_realtime_callback(on_realtime_update)
     
     output.object = "📸 Image loaded! Use preprocessing controls to enhance, then classify."
 
@@ -336,24 +388,63 @@ def classify(event=None):
 ✅ **Classification Result: {predicted_class}** {offline_indicator}
 
 ### 🎯 Confidence Scores
+    try:
+        # Start spinner
+        spinner.value = True
+        output.object = "🔍 Classifying..."
+
+        # Use processed image for classification
+        image_to_classify = processed_image
+
+        # Get preprocessing parameters
+        preprocessing_params = preprocessing_controls.get_enhancement_params()
+
+        # Use enhanced classifier for detailed results
+        result = classifier.classify_image(image_to_classify, preprocessing_params)
+        
+        # Extract results
+        predicted_class = result['predicted_class']
+        confidence_score = result['confidence']
+        all_probabilities = result['all_probabilities']
+        
+        # Update confidence chart with all probabilities
+        confidence_chart.update_predictions(all_probabilities, predicted_class)
+
+        # Save processed image
+        save_image(image_to_classify, predicted_class)
+        
+        # Create enhanced result message
+        confidence_percentage = confidence_score * 100
+        entropy = result['metadata']['entropy']
+        avg_confidence = result['metadata']['average_confidence']
+        
+        result_message = f"""
+**Classification Result: {predicted_class}**
+
+### Confidence Scores
 - **Top Prediction:** {predicted_class} ({confidence_percentage:.1f}%)
 - **Model Uncertainty (Entropy):** {entropy:.3f}
 - **Average Confidence:** {avg_confidence:.1f}%
 
-### 📊 Preprocessing Parameters Applied:
+### Preprocessing Parameters Applied:
 - **Brightness**: {preprocessing_params['brightness']:.1f}
 - **Contrast**: {preprocessing_params['contrast']:.1f}
 - **Rotation**: {preprocessing_params['rotation']:.0f}°
 - **Aspect Ratio**: {preprocessing_params.get('aspect_ratio', 'Original')}
 - **Crop**: {preprocessing_params.get('crop_box', 'None')}
 
-💾 Processed image saved to training data!
+Processed image saved to training data!
 
-📈 **View the confidence chart below** to see probabilities for all food classes.
-    """
-    
-    output.object = result_message
-    spinner.value = False
+**View the confidence chart below** to see probabilities for all food classes.
+        """
+        
+        output.object = result_message
+        spinner.value = False
+
+    except Exception as e:
+        output.object = f"❌ Error: {str(e)}"
+        spinner.value = False
+        confidence_chart.reset()
 
 # Setup image upload handler with error handling
 def handle_image_upload_with_error_handling():
@@ -363,8 +454,89 @@ def handle_image_upload_with_error_handling():
     except UserFriendlyError as e:
         handle_and_display_error(e, "image upload", handle_image_upload_with_error_handling)
     except Exception as e:
-        handle_and_display_error(e, "image upload", handle_image_upload_with_error_handling)
+        output.object = f"❌ Error: {str(e)}"
+        # Reset chart on error
+        confidence_chart.reset()
+    finally:
+        spinner.value = False
 
+def manual_export():
+    if current_image and current_predicted_class:
+        save_image(current_image, current_predicted_class, image_name="manual_export.jpg")
+        output.object = f"💾 Manually exported results for **{current_predicted_class}**"
+
+def export_callback(action, data=None):
+    """Callback for export panel operations"""
+    if action == 'get_current_data':
+        if current_image and current_predicted_class:
+            return {
+                'image': current_image,
+                'predicted_class': current_predicted_class,
+                'confidence': current_confidence,
+                'timestamp': datetime.now().isoformat()
+            }
+        return None
+    elif action == 'get_batch_data':
+        return classification_history.copy()
+    elif action == 'export_completed':
+        output.object = f"📤 Export completed: {data.get('filepath', 'unknown')}"
+    elif action == 'batch_export_completed':
+        output.object = f"📤 Batch export completed: {data.get('count', 0)} items exported to {data.get('filepath', 'unknown')}"
+    return None
+
+def handle_shortcut(combo):
+    global current_image, current_predicted_class
+    if combo == 'enter':
+        classify()
+    elif combo == 'escape':
+        ui.clear_image()
+        current_image = None
+        current_predicted_class = None
+    elif combo == 'ctrl+s':
+        manual_export()
+    elif combo == 'ctrl+h':
+        ui.toggle_history()
+    elif combo == 'ctrl+d':
+        # Toggle dark mode
+        if 'dark-theme' in app.css_classes:
+            app.css_classes = [c for c in app.css_classes if c != 'dark-theme']
+            try:
+                pn.config.theme = 'default'
+            except:
+                pass
+        else:
+            app.css_classes = app.css_classes + ['dark-theme']
+            try:
+                pn.config.theme = 'dark'
+            except:
+                pass
+
+# Export panel setup
+export_panel = ExportPanel(on_export_callback=export_callback)
+
+ui = MainInterface(classify_fn=classify, save_image_fn=manual_export)
+keyboard_manager = KeyboardManager(handle_shortcut)
+
+# Theme toggle button
+theme_toggle = pn.widgets.Button(name='🌙', button_type='light', width=50)
+theme_toggle.on_click(lambda event: handle_shortcut('ctrl+d'))
+
+# Header
+header = pn.Row(
+    pn.pane.Markdown("# 🍽️ FlavorSnap", styles={'margin-top': '0px', 'flex': '1'}),
+    theme_toggle,
+    sizing_mode='stretch_width',
+    css_classes=['header']
+)
+
+# Dashboard Layout
+dashboard_body = pn.Row(
+    ui.get_layout(),
+    export_panel.get_panel(),
+    sizing_mode='stretch_width'
+)
+
+# Setup image upload handler with error handling
 image_input.param.watch(lambda event: handle_image_upload_with_error_handling(), 'value')
 
 # Setup classification handler with error handling
@@ -424,28 +596,23 @@ confidence_section = pn.Column(
     confidence_chart_component,
 )
 
-app = pn.Row(
-    pn.Column(
-        upload_section,
-        preview_section,
-        error_banner,  # Add error banner to the layout
-        classification_section,
-        confidence_section,
-        sizing_mode='stretch_width',
-        max_width=800,
-    ),
-    controls_section,
-    sizing_mode='stretch_width',
+realtime_section = pn.Column(
+    "## 🔄 Real-time Preview",
+    realtime_preview_panel,
 )
 
+# Main app layout with real-time preview
 app = pn.Row(
     pn.Column(
         pwa_status,
         upload_section,
         preview_section,
+        error_banner,  # Add error banner to the layout
         classification_section,
+        confidence_section,
+        realtime_section,
         sizing_mode='stretch_width',
-        max_width=600,
+        max_width=900,
     ),
     controls_section,
     sizing_mode='stretch_width',
