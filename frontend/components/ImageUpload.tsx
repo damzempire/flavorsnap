@@ -98,6 +98,16 @@ export function ImageUpload({ onImageSelect, onError, loading = false, disabled 
     }
   }, [disabled, loading]);
 
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (disabled || loading) return;
+    
+    // Support Enter and Space keys for activation
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      handleClick();
+    }
+  }, [disabled, loading, handleClick]);
+
   return (
     <div className="w-full max-w-md mx-auto px-4 sm:px-0">
       <div
@@ -122,11 +132,7 @@ export function ImageUpload({ onImageSelect, onError, loading = false, disabled 
         role="button"
         tabIndex={0}
         aria-label={t('upload_image_area')}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            handleClick();
-          }
-        }}
+        onKeyDown={handleKeyDown}
       >
         <input
           ref={fileInputRef}
@@ -136,6 +142,7 @@ export function ImageUpload({ onImageSelect, onError, loading = false, disabled 
           className="hidden"
           disabled={disabled || loading}
           aria-label={t('select_image_file')}
+          tabIndex={-1} // Hide from tab order since parent is focusable
         />
         
         <div className="flex flex-col items-center space-y-3 sm:space-y-4">
