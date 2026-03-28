@@ -109,10 +109,24 @@ def predict():
     request_id = request.headers.get('X-Request-ID', f'req_{int(time.time() * 1000)}')
 
     try:
+        # Validate and sanitize JSON input if present
+        if request.is_json:
+            json_data = request.get_json()
+            is_valid, error_msg = validate_json_input(json_data)
+            if not is_valid:
+                logger.warning(f"JSON validation failed: {error_msg}")
+                return jsonify({'error': error_msg}), 400
+
+        # Validate file upload
         if 'image' not in request.files:
             return jsonify({'error': 'No image provided'}), 400
 
         file = request.files['image']
+
+        # Sanitize filename from form data
+        if file.filename:
+            file.filename = InputValidator.sanitize_filename(file.filename)
+
         is_valid, error_msg = InputValidator.validate_file_upload(file)
         if not is_valid:
             logger.warning(f"File validation failed: {error_msg}")
@@ -241,6 +255,12 @@ def optimize_image():
         processing_time = time.time() - start_time
         logger.info(f"Image optimization endpoint: {optimization_result['metadata']['compression_ratio']}% "
                    f"compression in {processing_time:.3f}s")
+
+        # Sanitize request ID from headers
+        request_id = InputValidator.sanitize_string(
+            request.headers.get('X-Request-ID', 'unknown'),
+            max_length=64
+        )
 
         return jsonify({
             'status': 'success',
