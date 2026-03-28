@@ -1,7 +1,7 @@
 import json
 import logging
 from datetime import datetime, date
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List
 
 from db_config import get_connection
 
@@ -514,6 +514,208 @@ def create_optimized_indexes():
 
     except Exception as exc:
         logger.error("Failed to create optimized indexes: %s", exc)
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+# GDPR Compliance Functions
+
+def create_user_consent_table():
+    """Create table for storing user consent records"""
+    conn = get_connection()
+    if not conn:
+        return False
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS user_consent (
+                        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+                        user_id TEXT NOT NULL,
+                        consent_type TEXT NOT NULL,
+                        granted BOOLEAN NOT NULL,
+                        timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                        ip_address TEXT,
+                        user_agent TEXT,
+                        UNIQUE (user_id, consent_type)
+                    );
+                    """
+                )
+                return True
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    return False
+
+
+def store_user_consent(user_id: str, consent_type: str, granted: bool, ip_address: str = None, user_agent: str = None) -> bool:
+    """Store or update user consent"""
+    conn = get_connection()
+    if not conn:
+        return False
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                create_user_consent_table()
+                cur.execute(
+                    """
+                    INSERT INTO user_consent (user_id, consent_type, granted, ip_address, user_agent)
+                    VALUES (%s, %s, %s, %s, %s)
+                    ON CONFLICT (user_id, consent_type)
+                    DO UPDATE SET
+                        granted = EXCLUDED.granted,
+                        timestamp = NOW(),
+                        ip_address = EXCLUDED.ip_address,
+                        user_agent = EXCLUDED.user_agent;
+                    """,
+                    (user_id, consent_type, granted, ip_address, user_agent)
+                )
+                return True
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    return False
+
+
+def get_user_consent(user_id: str) -> List[Dict[str, Any]]:
+    """Get all consent records for a user"""
+    conn = get_connection()
+    if not conn:
+        return []
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT consent_type, granted, timestamp, ip_address, user_agent
+                    FROM user_consent
+                    WHERE user_id = %s
+                    ORDER BY timestamp DESC;
+                    """,
+                    (user_id,)
+                )
+                results = cur.fetchall()
+                return [
+                    {
+                        "consent_type": row[0],
+                        "granted": row[1],
+                        "timestamp": row[2].isoformat() if row[2] else None,
+                        "ip_address": row[3],
+                        "user_agent": row[4]
+                    }
+                    for row in results
+                ]
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def export_user_data(user_id: str) -> Dict[str, Any]:
+    """Export all user data for GDPR compliance"""
+    conn = get_connection()
+    if not conn:
+        return {}
+    
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                # Export prediction history
+                cur.execute(
+                    """
+                    SELECT request_id, image_filename, label, confidence, all_predictions,
+                           processing_time, model_version, success, error_message, created_at
+                    FROM prediction_history
+                    WHERE user_id = %s
+                    ORDER BY created_at DESC;
+                    """,
+                    (user_id,)
+                )
+                predictions = cur.fetchall()
+                
+                # Export consent records
+                cur.execute(
+                    """
+                    SELECT consent_type, granted, timestamp, ip_address, user_agent
+                    FROM user_consent
+                    WHERE user_id = %s
+                    ORDER BY timestamp DESC;
+                    """,
+                    (user_id,)
+                )
+                consents = cur.fetchall()
+                
+                return {
+                    "user_id": user_id,
+                    "export_timestamp": datetime.utcnow().isoformat(),
+                    "prediction_history": [
+                        {
+                            "request_id": row[0],
+                            "image_filename": row[1],
+                            "label": row[2],
+                            "confidence": row[3],
+                            "all_predictions": row[4],
+                            "processing_time": row[5],
+                            "model_version": row[6],
+                            "success": row[7],
+                            "error_message": row[8],
+                            "created_at": row[9].isoformat() if row[9] else None
+                        }
+                        for row in predictions
+                    ],
+                    "consent_records": [
+                        {
+                            "consent_type": row[0],
+                            "granted": row[1],
+                            "timestamp": row[2].isoformat() if row[2] else None,
+                            "ip_address": row[3],
+                            "user_agent": row[4]
+                        }
+                        for row in consents
+                    ]
+                }
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def delete_user_data(user_id: str) -> Dict[str, int]:
+    """Delete all user data for GDPR compliance"""
+    conn = get_connection()
+    if not conn:
+        return {"prediction_history": 0, "user_consent": 0}
+    
+    deletion_counts = {}
+    
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                # Delete from prediction_history
+                cur.execute(
+                    "DELETE FROM prediction_history WHERE user_id = %s",
+                    (user_id,)
+                )
+                deletion_counts["prediction_history"] = cur.rowcount
+                
+                # Delete from user_consent
+                cur.execute(
+                    "DELETE FROM user_consent WHERE user_id = %s",
+                    (user_id,)
+                )
+                deletion_counts["user_consent"] = cur.rowcount
+                
+                return deletion_counts
     finally:
         try:
             conn.close()
