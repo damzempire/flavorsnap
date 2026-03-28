@@ -54,6 +54,17 @@ class SecurityConfig:
         'image/png',
         'image/webp'
     }
+    # Malicious file signatures
+    MALICIOUS_SIGNATURES = {
+        b'\x4D\x5A',  # PE executable
+        b'\x7FELF',   # ELF executable
+        b'\xCA\xFE\xBA\xBE',  # Java class
+        b'\xD0\xCF\x11\xE0',  # Microsoft Office
+        b'PK\x03\x04',  # ZIP (could contain malicious content)
+    }
+    # Image validation thresholds
+    MAX_IMAGE_DIMENSION = 8192
+    MIN_IMAGE_DIMENSION = 32
     
     # Image dimension constraints
     MIN_IMAGE_WIDTH = 100
@@ -293,6 +304,70 @@ class InputValidator:
         
         return True, None
 
+    @staticmethod
+    def _check_malicious_signatures(file_content: bytes) -> Tuple[bool, str]:
+        """Check for malicious file signatures"""
+        # Check file header for known malicious signatures
+        for signature, description in {
+            b'\x4D\x5A': 'PE executable',
+            b'\x7FELF': 'ELF executable', 
+            b'\xCA\xFE\xBA\xBE': 'Java class',
+            b'\xD0\xCF\x11\xE0': 'Microsoft Office',
+            b'PK\x03\x04': 'ZIP archive'
+        }.items():
+            if file_content.startswith(signature):
+                return True, description
+        
+        # Check for script content in image files
+        text_content = file_content.decode('utf-8', errors='ignore').lower()
+        script_patterns = [
+            '<script', 'javascript:', 'vbscript:', 
+            'onload=', 'onerror=', 'onclick=',
+            'eval(', 'document.', 'window.',
+            'php://', 'data://', 'file://'
+        ]
+        
+        for pattern in script_patterns:
+            if pattern in text_content:
+                return True, f'Script content detected: {pattern}'
+        
+        return False, ''
+    
+    @staticmethod
+    def _validate_image_content(file_content: bytes) -> Tuple[bool, str]:
+        """Validate image content using PIL"""
+        try:
+            # Open image with PIL
+            image = Image.open(io.BytesIO(file_content))
+            
+            # Verify image format
+            if image.format not in ['JPEG', 'PNG', 'GIF', 'WEBP']:
+                return False, f"Unsupported image format: {image.format}"
+            
+            # Check image dimensions
+            width, height = image.size
+            if width < SecurityConfig.MIN_IMAGE_DIMENSION or height < SecurityConfig.MIN_IMAGE_DIMENSION:
+                return False, f"Image too small: {width}x{height}"
+            
+            if width > SecurityConfig.MAX_IMAGE_DIMENSION or height > SecurityConfig.MAX_IMAGE_DIMENSION:
+                return False, f"Image too large: {width}x{height}"
+            
+            # Verify image can be loaded (detects corrupted files)
+            image.verify()
+            
+            # Re-open after verify (verify() closes the image)
+            image = Image.open(io.BytesIO(file_content))
+            
+            # Check for reasonable aspect ratio (to detect panorama attacks)
+            aspect_ratio = max(width, height) / min(width, height)
+            if aspect_ratio > 20:  # Very extreme aspect ratios
+                return False, f"Extreme aspect ratio: {aspect_ratio:.2f}"
+            
+            return True, ''
+            
+        except Exception as e:
+            return False, f"Image validation failed: {str(e)}"
+    
     @staticmethod
     def secure_filename_custom(filename: str) -> str:
         """Custom secure filename generation with path traversal protection"""

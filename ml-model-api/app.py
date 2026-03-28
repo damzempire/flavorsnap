@@ -52,6 +52,15 @@ security_monitor = SecurityMonitor(app)
 # Initialize performance monitoring middleware
 monitoring_middleware = MonitoringMiddleware(app)
 
+# Initialize model registry and validator
+try:
+    model_registry = ModelRegistry()
+    model_validator = ModelValidator(model_registry)
+    logger.info("Model validator initialized successfully")
+except Exception as e:
+    logger.warning(f"Model validator initialization failed: {e}")
+    model_validator = None
+
 # Initialize rate limiter with tiered key function
 limiter = Limiter(
     key_func=RateLimitManager.get_tiered_key_func(),
@@ -339,6 +348,7 @@ def serve_optimized_image(filename: str):
 @app.route('/health', methods=['GET'])
 @limiter.exempt
 def health_check():
+    """Comprehensive health check endpoint"""
     try:
         # Get detailed health from monitoring middleware
         if hasattr(monitoring_middleware, '_get_detailed_health'):
@@ -357,9 +367,19 @@ def health_check():
         model_info = model_inference.get_model_info()
 
         return jsonify({
-            'status': 'healthy',
+            'status': overall_status,
             'timestamp': datetime.now().isoformat(),
             'version': '2.0.0',
+            'checks': checks,
+            'endpoints': {
+                'basic': '/health',
+                'detailed': '/health/detailed',
+                'database': '/health/database',
+                'redis': '/health/redis',
+                'model': '/health/model',
+                'system': '/health/system',
+                'dependencies': '/health/dependencies'
+            },
             'security': {
                 'rate_limiting': True,
                 'api_key_auth': True,
@@ -369,8 +389,7 @@ def health_check():
             'monitoring': {
                 'enabled': True,
                 'metrics_endpoint': '/metrics',
-                'dashboard_endpoint': '/dashboard',
-                'detailed_health_endpoint': '/health/detailed'
+                'dashboard_endpoint': '/dashboard'
             },
             'cache': cache_stats,
             'model': {
@@ -383,8 +402,10 @@ def health_check():
         })
     except Exception as e:
         logger.error(f"Health check error: {e}")
+        if hasattr(monitoring_middleware, 'HEALTH_CHECK_STATUS'):
+            monitoring_middleware.HEALTH_CHECK_STATUS.set(0)
         return jsonify({
-            'status': 'degraded',
+            'status': 'unhealthy',
             'timestamp': datetime.now().isoformat(),
             'error': str(e)
         }), 500
@@ -439,6 +460,11 @@ def api_info():
             'predict': 'POST /predict - Food classification with caching',
             'health': 'GET /health - Health check with cache stats',
             'health_detailed': 'GET /health/detailed - Detailed health metrics',
+            'health_database': 'GET /health/database - Database connectivity check',
+            'health_redis': 'GET /health/redis - Redis connectivity check',
+            'health_model': 'GET /health/model - ML model status check',
+            'health_system': 'GET /health/system - System resources check',
+            'health_dependencies': 'GET /health/dependencies - Dependencies check',
             'metrics': 'GET /metrics - Prometheus metrics',
             'dashboard': 'GET /dashboard - Performance dashboard',
             'info': 'GET /api/info - API information',
@@ -468,7 +494,8 @@ def api_info():
             'prometheus_metrics': True,
             'performance_dashboard': True,
             'system_metrics': ['cpu', 'memory', 'gpu', 'disk'],
-            'application_metrics': ['requests', 'response_time', 'inference_metrics', 'error_rate']
+            'application_metrics': ['requests', 'response_time', 'inference_metrics', 'error_rate'],
+            'health_check_metrics': ['dependency_status', 'resource_usage', 'model_performance']
         }
     })
 
