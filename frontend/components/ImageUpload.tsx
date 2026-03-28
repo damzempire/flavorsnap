@@ -7,9 +7,10 @@ interface ImageUploadProps {
   onError?: (error: AppError) => void;
   loading?: boolean;
   disabled?: boolean;
+  uploadProgress?: number; // Progress percentage (0-100)
 }
 
-export function ImageUpload({ onImageSelect, onError, loading = false, disabled = false }: ImageUploadProps) {
+export function ImageUpload({ onImageSelect, onError, loading = false, disabled = false, uploadProgress }: ImageUploadProps) {
   const { t } = useTranslation('common');
   const [isDragging, setIsDragging] = useState(false);
   const [isTouching, setIsTouching] = useState(false);
@@ -183,6 +184,20 @@ export function ImageUpload({ onImageSelect, onError, loading = false, disabled 
           </p>
         </div>
       </div>
+      
+      {/* Upload progress bar */}
+      {uploadProgress !== undefined && uploadProgress > 0 && uploadProgress < 100 && (
+        <div className="absolute bottom-0 left-0 right-0 h-1 bg-gray-200 rounded-b-2xl overflow-hidden">
+          <div 
+            className="h-full bg-accent transition-all duration-300 ease-out"
+            style={{ width: `${uploadProgress}%` }}
+            role="progressbar"
+            aria-valuenow={uploadProgress}
+            aria-valuemin={0}
+            aria-valuemax={100}
+          />
+        </div>
+      )}
       
       {/* File type hint */}
       <div className="mt-3 text-center">

@@ -3,6 +3,7 @@ import { api } from "@/utils/api";
 import { storage } from "@/utils/storage";
 import { pwaManager } from "@/lib/pwa-utils";
 import { ErrorMessage } from "@/components/ErrorMessage";
+import { ImageUpload } from "@/components/ImageUpload";
 import { useTranslation } from "next-i18next";
 import { serverSideTranslations } from "next-i18next/serverSideTranslations";
 import type { GetStaticProps } from "next";
@@ -21,6 +22,7 @@ export default function Classify() {
   const [error, setError] = useState<AppError | null>(null);
   const [classification, setClassification] = useState<ClassificationResult | null>(null);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [uploadProgress, setUploadProgress] = useState<number>(0);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Load history from local storage on mount
@@ -68,6 +70,7 @@ export default function Classify() {
     if (!image) return;
 
     setLoading(true);
+    setUploadProgress(0);
     setError(null);
 
     // Announce to screen readers that classification is starting
@@ -82,6 +85,8 @@ export default function Classify() {
       }, {
         retries: 2,
         retryDelay: 1000
+      }, (progress) => {
+        setUploadProgress(progress);
       });
 
       if (response.error) {
@@ -121,6 +126,7 @@ export default function Classify() {
       console.error('Classification error:', err);
     } finally {
       setLoading(false);
+      setUploadProgress(0);
     }
   };
 
@@ -182,23 +188,16 @@ export default function Classify() {
         />
 
         {!image && (
-          <button
-            onClick={handleOpenPicker}
-            className="group relative bg-indigo-600 text-white px-6 sm:px-10 py-6 sm:py-8 md:px-16 md:py-12 rounded-[2rem] sm:rounded-[2.5rem] shadow-2xl hover:bg-indigo-700 active:scale-95 transition-all focus:outline-none focus:ring-4 focus:ring-indigo-500/50 flex flex-col items-center gap-3 sm:gap-4 min-h-[180px] sm:min-h-[220px] w-full max-w-xs sm:max-w-none animate-pulse-slow touch-manipulation"
-            aria-label="Open camera to capture food image"
-          >
-            <div className="w-14 h-14 sm:w-16 md:w-24 md:h-24 bg-indigo-500 rounded-full flex items-center justify-center shadow-inner mb-2">
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8 sm:h-10 sm:w-10 md:h-14 md:w-14" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
-              </svg>
-            </div>
-            <span className="text-lg sm:text-xl md:text-3xl font-black tracking-tight text-center px-2">{t("open_camera")}</span>
-            <div className="flex gap-2">
-              <kbd className="hidden sm:inline-block px-3 py-1 text-xs bg-indigo-500/50 rounded border border-indigo-400/50 backdrop-blur-sm">O</kbd>
-            </div>
-          </button>
-        )}
+          <ImageUpload
+            onImageSelect={(file, imageUrl) => {
+              setImage(imageUrl);
+              setError(null);
+              setClassification(null);
+            }}
+            onError={setError}
+            loading={false}
+            disabled={false}
+          />
 
         {error && (
           <div className="w-full mb-6 sm:mb-8 mt-4 max-w-md animate-shake px-2">
@@ -237,7 +236,7 @@ export default function Classify() {
                 <button
                   onClick={handleClassify}
                   disabled={loading}
-                  className="w-full flex items-center justify-center gap-3 sm:gap-4 bg-emerald-600 text-white px-6 sm:px-8 py-5 sm:py-6 md:py-10 rounded-[1.5rem] sm:rounded-[2rem] shadow-2xl hover:bg-emerald-700 disabled:bg-gray-400 transition-all active:scale-95 text-xl sm:text-2xl font-black group min-h-[56px] sm:min-h-[64px] touch-manipulation"
+                  className="w-full flex items-center justify-center gap-3 sm:gap-4 bg-emerald-600 text-white px-6 sm:px-8 py-5 sm:py-6 md:py-10 rounded-[1.5rem] sm:rounded-[2rem] shadow-2xl hover:bg-emerald-700 disabled:bg-gray-400 transition-all active:scale-95 text-xl sm:text-2xl font-black group min-h-[56px] sm:min-h-[64px] touch-manipulation relative overflow-hidden"
                   aria-label={loading ? t('classifying') : t('classify_food')}
                 >
                   {loading ? (
@@ -250,6 +249,16 @@ export default function Classify() {
                       <span>{t('classify_food')}</span>
                       <kbd className="hidden sm:inline-block px-3 py-1 text-sm bg-emerald-500/50 rounded border border-emerald-400 uppercase">C</kbd>
                     </>
+                  )}
+                  
+                  {/* Progress bar overlay */}
+                  {uploadProgress > 0 && uploadProgress < 100 && (
+                    <div className="absolute bottom-0 left-0 right-0 h-1 bg-emerald-800/30">
+                      <div 
+                        className="h-full bg-white/80 transition-all duration-300"
+                        style={{ width: `${uploadProgress}%` }}
+                      />
+                    </div>
                   )}
                 </button>
 
