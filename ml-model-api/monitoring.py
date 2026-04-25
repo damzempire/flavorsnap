@@ -4,10 +4,16 @@ import torch
 import sqlite3
 import os
 import sys
+import json
+import threading
+import logging
+from datetime import datetime, timedelta
 from functools import wraps
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List, Callable
 from prometheus_client import Counter, Histogram, Gauge, generate_latest, CONTENT_TYPE_LATEST
 from flask import Flask, Response, request, make_response
+from dataclasses import dataclass, asdict
+import pytz
 
 # Optional imports
 try:
@@ -562,3 +568,474 @@ def track_inference(func):
 def update_model_accuracy(accuracy: float):
     """Update model accuracy metric"""
     MODEL_ACCURACY.set(accuracy)
+
+# Advanced Backup and Recovery Monitoring Metrics
+BACKUP_OPERATIONS = Counter(
+    'backup_operations_total',
+    'Total backup operations',
+    ['backup_type', 'status']
+)
+
+BACKUP_DURATION = Histogram(
+    'backup_duration_seconds',
+    'Backup operation duration in seconds',
+    ['backup_type'],
+    buckets=[60, 300, 900, 1800, 3600, 7200]
+)
+
+BACKUP_SIZE = Gauge(
+    'backup_size_bytes',
+    'Current backup size in bytes'
+)
+
+BACKUP_RETENTION_DAYS = Gauge(
+    'backup_retention_days',
+    'Backup retention period in days'
+)
+
+RECOVERY_OPERATIONS = Counter(
+    'recovery_operations_total',
+    'Total recovery operations',
+    ['recovery_type', 'status']
+)
+
+RECOVERY_DURATION = Histogram(
+    'recovery_duration_seconds',
+    'Recovery operation duration in seconds',
+    ['recovery_type'],
+    buckets=[300, 900, 1800, 3600, 7200, 14400]
+)
+
+DISASTER_EVENTS = Counter(
+    'disaster_events_total',
+    'Total disaster events',
+    ['disaster_level', 'status']
+)
+
+DISASTER_RECOVERY_TIME = Histogram(
+    'disaster_recovery_time_seconds',
+    'Disaster recovery time in seconds',
+    ['disaster_level'],
+    buckets=[300, 900, 1800, 3600, 7200, 86400]
+)
+
+BACKUP_VERIFICATION_RESULTS = Counter(
+    'backup_verification_results_total',
+    'Backup verification results',
+    ['result']
+)
+
+RECOVERY_TEST_RESULTS = Counter(
+    'recovery_test_results_total',
+    'Recovery test results',
+    ['result']
+)
+
+@dataclass
+class BackupMonitoringConfig:
+    """Configuration for backup monitoring"""
+    enable_backup_metrics: bool = True
+    enable_recovery_metrics: bool = True
+    enable_disaster_metrics: bool = True
+    backup_alert_threshold_gb: float = 50.0
+    recovery_alert_threshold_minutes: float = 30.0
+    disaster_alert_threshold_minutes: float = 15.0
+
+class BackupMonitoringSystem:
+    """Advanced backup and recovery monitoring system"""
+    
+    def __init__(self, config: BackupMonitoringConfig):
+        self.config = config
+        self.logger = logging.getLogger(__name__)
+        self.monitoring_active = False
+        self.monitoring_thread = None
+        self.backup_metrics_cache = {}
+        self.recovery_metrics_cache = {}
+        
+        # Initialize monitoring database
+        self.db_path = '/tmp/backup_monitoring.db'
+        self._init_monitoring_db()
+        
+        self.logger.info("BackupMonitoringSystem initialized")
+    
+    def _init_monitoring_db(self):
+        """Initialize monitoring database"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS backup_metrics (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                backup_id TEXT NOT NULL,
+                backup_type TEXT NOT NULL,
+                duration_seconds REAL,
+                size_bytes INTEGER,
+                status TEXT NOT NULL,
+                verification_result TEXT
+            )
+        ''')
+        
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS recovery_metrics (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                recovery_id TEXT NOT NULL,
+                recovery_type TEXT NOT NULL,
+                duration_seconds REAL,
+                status TEXT NOT NULL,
+                backup_id TEXT
+            )
+        ''')
+        
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS disaster_metrics (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                event_id TEXT NOT NULL,
+                disaster_level TEXT NOT NULL,
+                recovery_time_seconds REAL,
+                status TEXT NOT NULL
+            )
+        ''')
+        
+        conn.commit()
+        conn.close()
+    
+    def record_backup_operation(self, backup_id: str, backup_type: str, 
+                              duration_seconds: float, size_bytes: int, 
+                              status: str, verification_result: Optional[str] = None):
+        """Record backup operation metrics"""
+        if not self.config.enable_backup_metrics:
+            return
+        
+        try:
+            # Update Prometheus metrics
+            BACKUP_OPERATIONS.labels(backup_type=backup_type, status=status).inc()
+            BACKUP_DURATION.labels(backup_type=backup_type).observe(duration_seconds)
+            BACKUP_SIZE.set(size_bytes)
+            
+            # Record to database
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                INSERT INTO backup_metrics 
+                (timestamp, backup_id, backup_type, duration_seconds, size_bytes, status, verification_result)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                datetime.now(pytz.UTC).isoformat(),
+                backup_id,
+                backup_type,
+                duration_seconds,
+                size_bytes,
+                status,
+                verification_result
+            ))
+            
+            conn.commit()
+            conn.close()
+            
+            # Cache metrics
+            self.backup_metrics_cache[backup_id] = {
+                'timestamp': datetime.now(pytz.UTC),
+                'backup_type': backup_type,
+                'duration_seconds': duration_seconds,
+                'size_bytes': size_bytes,
+                'status': status,
+                'verification_result': verification_result
+            }
+            
+            # Check for alerts
+            self._check_backup_alerts(backup_id, duration_seconds, size_bytes)
+            
+            self.logger.info(f"Recorded backup operation: {backup_id}")
+            
+        except Exception as e:
+            self.logger.error(f"Failed to record backup operation: {str(e)}")
+    
+    def record_recovery_operation(self, recovery_id: str, recovery_type: str,
+                                duration_seconds: float, status: str,
+                                backup_id: Optional[str] = None):
+        """Record recovery operation metrics"""
+        if not self.config.enable_recovery_metrics:
+            return
+        
+        try:
+            # Update Prometheus metrics
+            RECOVERY_OPERATIONS.labels(recovery_type=recovery_type, status=status).inc()
+            RECOVERY_DURATION.labels(recovery_type=recovery_type).observe(duration_seconds)
+            
+            # Record to database
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                INSERT INTO recovery_metrics 
+                (timestamp, recovery_id, recovery_type, duration_seconds, status, backup_id)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (
+                datetime.now(pytz.UTC).isoformat(),
+                recovery_id,
+                recovery_type,
+                duration_seconds,
+                status,
+                backup_id
+            ))
+            
+            conn.commit()
+            conn.close()
+            
+            # Cache metrics
+            self.recovery_metrics_cache[recovery_id] = {
+                'timestamp': datetime.now(pytz.UTC),
+                'recovery_type': recovery_type,
+                'duration_seconds': duration_seconds,
+                'status': status,
+                'backup_id': backup_id
+            }
+            
+            # Check for alerts
+            self._check_recovery_alerts(recovery_id, duration_seconds)
+            
+            self.logger.info(f"Recorded recovery operation: {recovery_id}")
+            
+        except Exception as e:
+            self.logger.error(f"Failed to record recovery operation: {str(e)}")
+    
+    def record_disaster_event(self, event_id: str, disaster_level: str,
+                            recovery_time_seconds: float, status: str):
+        """Record disaster event metrics"""
+        if not self.config.enable_disaster_metrics:
+            return
+        
+        try:
+            # Update Prometheus metrics
+            DISASTER_EVENTS.labels(disaster_level=disaster_level, status=status).inc()
+            DISASTER_RECOVERY_TIME.labels(disaster_level=disaster_level).observe(recovery_time_seconds)
+            
+            # Record to database
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                INSERT INTO disaster_metrics 
+                (timestamp, event_id, disaster_level, recovery_time_seconds, status)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (
+                datetime.now(pytz.UTC).isoformat(),
+                event_id,
+                disaster_level,
+                recovery_time_seconds,
+                status
+            ))
+            
+            conn.commit()
+            conn.close()
+            
+            # Check for alerts
+            self._check_disaster_alerts(event_id, disaster_level, recovery_time_seconds)
+            
+            self.logger.info(f"Recorded disaster event: {event_id}")
+            
+        except Exception as e:
+            self.logger.error(f"Failed to record disaster event: {str(e)}")
+    
+    def record_backup_verification(self, backup_id: str, result: str):
+        """Record backup verification result"""
+        try:
+            BACKUP_VERIFICATION_RESULTS.labels(result=result).inc()
+            
+            # Update cached metrics
+            if backup_id in self.backup_metrics_cache:
+                self.backup_metrics_cache[backup_id]['verification_result'] = result
+            
+            self.logger.info(f"Recorded backup verification: {backup_id} - {result}")
+            
+        except Exception as e:
+            self.logger.error(f"Failed to record backup verification: {str(e)}")
+    
+    def record_recovery_test(self, test_id: str, result: str):
+        """Record recovery test result"""
+        try:
+            RECOVERY_TEST_RESULTS.labels(result=result).inc()
+            self.logger.info(f"Recorded recovery test: {test_id} - {result}")
+            
+        except Exception as e:
+            self.logger.error(f"Failed to record recovery test: {str(e)}")
+    
+    def _check_backup_alerts(self, backup_id: str, duration_seconds: float, size_bytes: float):
+        """Check for backup-related alerts"""
+        try:
+            # Check backup size
+            size_gb = size_bytes / (1024**3)
+            if size_gb > self.config.backup_alert_threshold_gb:
+                self._send_alert(f"Large backup detected: {backup_id} ({size_gb:.2f} GB)")
+            
+            # Check backup duration (if unusually long)
+            if duration_seconds > 7200:  # 2 hours
+                self._send_alert(f"Long backup duration: {backup_id} ({duration_seconds:.0f} seconds)")
+            
+        except Exception as e:
+            self.logger.error(f"Failed to check backup alerts: {str(e)}")
+    
+    def _check_recovery_alerts(self, recovery_id: str, duration_seconds: float):
+        """Check for recovery-related alerts"""
+        try:
+            if duration_seconds > self.config.recovery_alert_threshold_minutes * 60:
+                self._send_alert(f"Long recovery time: {recovery_id} ({duration_seconds:.0f} seconds)")
+            
+        except Exception as e:
+            self.logger.error(f"Failed to check recovery alerts: {str(e)}")
+    
+    def _check_disaster_alerts(self, event_id: str, disaster_level: str, recovery_time_seconds: float):
+        """Check for disaster-related alerts"""
+        try:
+            if disaster_level in ['high', 'critical']:
+                self._send_alert(f"High-level disaster: {event_id} ({disaster_level})")
+            
+            if recovery_time_seconds > self.config.disaster_alert_threshold_minutes * 60:
+                self._send_alert(f"Long disaster recovery: {event_id} ({recovery_time_seconds:.0f} seconds)")
+            
+        except Exception as e:
+            self.logger.error(f"Failed to check disaster alerts: {str(e)}")
+    
+    def _send_alert(self, message: str):
+        """Send monitoring alert"""
+        try:
+            # Log alert
+            self.logger.warning(f"ALERT: {message}")
+            
+            # Here you could integrate with external alerting systems
+            # like PagerDuty, Slack, email, etc.
+            
+        except Exception as e:
+            self.logger.error(f"Failed to send alert: {str(e)}")
+    
+    def get_backup_metrics_summary(self, hours: int = 24) -> Dict[str, Any]:
+        """Get backup metrics summary for the last N hours"""
+        try:
+            cutoff_time = datetime.now(pytz.UTC) - timedelta(hours=hours)
+            
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                SELECT 
+                    backup_type,
+                    status,
+                    COUNT(*) as count,
+                    AVG(duration_seconds) as avg_duration,
+                    AVG(size_bytes) as avg_size,
+                    MAX(size_bytes) as max_size
+                FROM backup_metrics 
+                WHERE timestamp > ?
+                GROUP BY backup_type, status
+            ''', (cutoff_time.isoformat(),))
+            
+            results = cursor.fetchall()
+            conn.close()
+            
+            summary = {}
+            for row in results:
+                backup_type, status, count, avg_duration, avg_size, max_size = row
+                
+                if backup_type not in summary:
+                    summary[backup_type] = {}
+                
+                summary[backup_type][status] = {
+                    'count': count,
+                    'avg_duration_seconds': avg_duration,
+                    'avg_size_bytes': avg_size,
+                    'max_size_bytes': max_size
+                }
+            
+            return summary
+            
+        except Exception as e:
+            self.logger.error(f"Failed to get backup metrics summary: {str(e)}")
+            return {}
+    
+    def get_recovery_metrics_summary(self, hours: int = 24) -> Dict[str, Any]:
+        """Get recovery metrics summary for the last N hours"""
+        try:
+            cutoff_time = datetime.now(pytz.UTC) - timedelta(hours=hours)
+            
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                SELECT 
+                    recovery_type,
+                    status,
+                    COUNT(*) as count,
+                    AVG(duration_seconds) as avg_duration
+                FROM recovery_metrics 
+                WHERE timestamp > ?
+                GROUP BY recovery_type, status
+            ''', (cutoff_time.isoformat(),))
+            
+            results = cursor.fetchall()
+            conn.close()
+            
+            summary = {}
+            for row in results:
+                recovery_type, status, count, avg_duration = row
+                
+                if recovery_type not in summary:
+                    summary[recovery_type] = {}
+                
+                summary[recovery_type][status] = {
+                    'count': count,
+                    'avg_duration_seconds': avg_duration
+                }
+            
+            return summary
+            
+        except Exception as e:
+            self.logger.error(f"Failed to get recovery metrics summary: {str(e)}")
+            return {}
+    
+    def get_disaster_metrics_summary(self, hours: int = 24) -> Dict[str, Any]:
+        """Get disaster metrics summary for the last N hours"""
+        try:
+            cutoff_time = datetime.now(pytz.UTC) - timedelta(hours=hours)
+            
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                SELECT 
+                    disaster_level,
+                    status,
+                    COUNT(*) as count,
+                    AVG(recovery_time_seconds) as avg_recovery_time
+                FROM disaster_metrics 
+                WHERE timestamp > ?
+                GROUP BY disaster_level, status
+            ''', (cutoff_time.isoformat(),))
+            
+            results = cursor.fetchall()
+            conn.close()
+            
+            summary = {}
+            for row in results:
+                disaster_level, status, count, avg_recovery_time = row
+                
+                if disaster_level not in summary:
+                    summary[disaster_level] = {}
+                
+                summary[disaster_level][status] = {
+                    'count': count,
+                    'avg_recovery_time_seconds': avg_recovery_time
+                }
+            
+            return summary
+            
+        except Exception as e:
+            self.logger.error(f"Failed to get disaster metrics summary: {str(e)}")
+            return {}
+
+# Global backup monitoring instance
+backup_monitoring_config = BackupMonitoringConfig()
+backup_monitoring_system = BackupMonitoringSystem(backup_monitoring_config)
