@@ -1165,3 +1165,53 @@ def get_graph_persistence_manager() -> GraphPersistenceManager:
     if graph_persistence_manager is None:
         graph_persistence_manager = GraphPersistenceManager()
     return graph_persistence_manager
+
+
+
+class PersistenceLayer:
+    """
+    Simulated DB persistence layer with caching and connection pooling.
+    """
+
+    def __init__(self):
+        self.storage: Dict[str, Any] = {}
+        self.cache: Dict[str, Any] = {}
+        self.connection_pool_size = 10
+        self.active_connections = 0
+
+    # --------------------------
+    # CONNECTION OPTIMIZATION
+    # --------------------------
+    def connect(self):
+        if self.active_connections >= self.connection_pool_size:
+            raise Exception("Connection pool exhausted")
+
+        self.active_connections += 1
+        return f"conn-{self.active_connections}"
+
+    def disconnect(self):
+        self.active_connections = max(0, self.active_connections - 1)
+
+    # --------------------------
+    # CACHE LAYER
+    # --------------------------
+    def cache_get(self, key: str):
+        return self.cache.get(key)
+
+    def cache_set(self, key: str, value: Any):
+        self.cache[key] = value
+
+    # --------------------------
+    # CRUD OPERATIONS
+    # --------------------------
+    def save(self, table: str, key: str, value: Any):
+        if table not in self.storage:
+            self.storage[table] = {}
+
+        self.storage[table][key] = {
+            "value": value,
+            "timestamp": time.time()
+        }
+
+    def load(self, table: str, key: str):
+        return self.storage.get(table, {}).get(key)
