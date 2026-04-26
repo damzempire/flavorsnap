@@ -1047,3 +1047,27 @@ class EnhancedSecurityConfig:
             'warnings': warnings,
             'threat_score': getattr(request, 'threat_score', 0)
         }
+
+
+class SecurityConfig:
+    """
+    Central security configuration for encryption system.
+    """
+
+    # Encryption algorithm
+    ALGORITHM = "AES-256-GCM"
+
+    # Key sizes
+    KEY_SIZE = 32  # 256 bits
+
+    # Key rotation interval (days)
+    KEY_ROTATION_DAYS = 30
+
+    # Environment-based secret storage (fallback only for dev)
+    MASTER_KEY = os.getenv("MASTER_KEY", None)
+
+    # Enable encryption monitoring
+    ENABLE_AUDIT_LOGS = True
+
+    # Performance tuning
+    CHUNK_SIZE = 64 * 1024  # 64KB streaming encryption
