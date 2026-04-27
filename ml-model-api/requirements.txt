@@ -17,6 +17,4 @@ opentelemetry-sdk==1.22.0
 opentelemetry-instrumentation-flask==0.43b0
 opentelemetry-instrumentation-requests==0.43b0
 opentelemetry-exporter-otlp==1.22.0
-transformers==4.35.0
-langdetect==1.0.9
-nltk==3.8.1
+
