@@ -2,3 +2,9 @@ flask
 pillow
 torch
 torchvision
+pyyaml
+sqlalchemy
+psycopg2-binary
+watchdog
+cryptography
+python-dotenv
