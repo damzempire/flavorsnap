@@ -64,9 +64,34 @@ cache:
   password: "${CACHE_PASSWORD:}"
   db: 0
   ttl: 3600
+  default_cache_size: 100
+  result_cache_size: 50
+  queue_cache_size: 200
+  cleanup_interval: 300
+
+queue:
+  max_workers: 4
+  max_size: 10000
+  persistence:
+    backend: "sqlite"
+    db_path: "queue_persistence.db"
+    recovery_enabled: true
+    cleanup_interval: 3600
+  monitoring:
+    interval: 30
+    max_history: 10000
+    enable_alerts: true
+  load_balancing:
+    strategy: "round_robin"
+    worker_health_check: true
+  dead_letter_queue:
+    max_size: 10000
+    retry_delay: 60
+    max_retries: 3
 
 features:
   enable_hot_reload: true
   enable_config_validation: true
   enable_backup: true
   enable_versioning: true
+  enable_queue_management: true
