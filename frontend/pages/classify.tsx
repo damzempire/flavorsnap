@@ -1,7 +1,20 @@
-import { useState, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
+import { api } from "@/utils/api";
+import { storage } from "@/utils/storage";
+import { pwaManager } from "@/lib/pwa-utils";
+import { ErrorMessage } from "@/components/ErrorMessage";
+import { ImageUpload } from "@/components/ImageUpload";
+import { ClassificationResult as ClassificationResultComponent } from "@/components/ClassificationResult";
+import { ThemeToggle } from "@/components/ThemeToggle";
+import { VoiceControl } from "@/components/VoiceControl";
+import { useTranslation } from "next-i18next";
+import { serverSideTranslations } from "next-i18next/serverSideTranslations";
+import type { GetStaticProps } from "next";
+import LanguageSwitcher from "@/components/LanguageSwitcher";
+import { useKeyboardShortcuts } from "@/utils/useKeyboardShortcuts";
+import { ClassificationResult, HistoryEntry, AppError } from "@/types";
 import { useRouter } from "next/router";
-import Image from "next/image";
-import { predictionAPI } from "../utils/api";
+import { VoiceCommand } from "@/hooks/useVoiceCommands";
 
 interface PredictionResult {
   label: string;
@@ -110,24 +123,64 @@ export default function Classify() {
     }
   };
 
+  // Handle voice commands
+  const handleVoiceCommand = (command: VoiceCommand) => {
+    switch (command) {
+      case 'upload':
+        handleOpenPicker();
+        break;
+      case 'classify':
+        if (image && !loading) {
+          handleClassify();
+        }
+        break;
+      case 'reset':
+        handleReset();
+        break;
+      case 'help':
+        // Show help modal or alert
+        alert(t('voice_help', 'Voice commands: "upload" to open camera, "classify" to analyze, "reset" to clear, "cancel" to stop'));
+        break;
+      case 'cancel':
+        // Cancel any ongoing operation
+        if (loading) {
+          setLoading(false);
+          setUploadProgress(0);
+        }
+        break;
+    }
+  };
+
+  useKeyboardShortcuts([
+    { key: 'o', action: handleOpenPicker },
+    { key: 'c', action: () => image && !loading && handleClassify() },
+    { key: 'r', action: handleReset },
+    { key: 'Escape', action: handleReset },
+    { key: 'v', action: () => document.getElementById('voice-toggle')?.click() },
+  ]);
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-orange-50 to-red-50 py-8 px-4">
-      <div className="max-w-4xl mx-auto">
-        {/* Header */}
-        <header className="text-center mb-8">
+    <div className="min-h-screen flex flex-col items-center p-3 sm:p-4 md:p-8 bg-gray-50 dark:bg-gray-900 transition-colors duration-300">
+      <div className="w-full max-w-6xl flex justify-between items-center mb-4">
+        <div className="flex items-center gap-2">
           <button
-            onClick={() => router.push("/")}
-            className="mb-4 text-gray-600 hover:text-gray-800 flex items-center gap-2 mx-auto"
+            onClick={() => router.push('/')}
+            className="text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 px-4 py-2 rounded-lg transition-colors"
+            aria-label={t('back_to_home', 'Back to home')}
           >
-            ← Back to Home
+            ← {t('back', 'Back')}
           </button>
-          <h1 className="text-4xl font-bold text-gray-800 mb-2">
-            🍲 Food Classification
-          </h1>
-          <p className="text-gray-600">
-            Upload an image of Nigerian food to get AI-powered classification
-          </p>
-        </header>
+          <ThemeToggle />
+        </div>
+        <div className="flex items-center gap-2">
+          <VoiceControl 
+            onCommand={handleVoiceCommand}
+            disabled={loading}
+            className="mr-2"
+          />
+          <LanguageSwitcher />
+        </div>
+      </div>
 
         <div className="grid md:grid-cols-2 gap-8">
           {/* Upload Section */}
