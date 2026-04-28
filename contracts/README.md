@@ -1,107 +1,332 @@
-# ⛓️ FlavorSnap Smart Contracts
+# FlavorSnap Smart Contracts
 
-This directory contains the Soroban smart contracts that power the decentralized governance and incentive layers of FlavorSnap.
+Comprehensive smart contract suite for the FlavorSnap decentralized food evaluation and governance platform.
 
-## 📋 Table of Contents
+## Overview
 
-- [🌳 Overview](#-overview)
-- [🏗️ Contract Architecture](#️-contract-architecture)
-- [🛠️ Development Setup](#️-development-setup)
-- [📦 Contract Modules](#-contract-modules)
-  - [Model Governance](#model-governance)
-  - [Tokenized Incentive](#tokenized-incentive)
-  - [Sensory Evaluation](#sensory-evaluation)
-- [🚀 Deployment](#-deployment)
-- [🔒 Security Considerations](#-security-considerations)
+This repository contains advanced smart contracts built on Soroban (Stellar) that provide:
 
-## 🌳 Overview
+- **Model Governance**: Decentralized voting and proposal system for AI model updates
+- **Tokenized Incentives**: Staking, rewards, and vesting mechanisms
+- **Sensory Evaluation**: Reputation-based food evaluation system
+- **Security & Upgradeability**: Comprehensive security audit and upgrade patterns
 
-FlavorSnap utilizes the Stellar network and Soroban smart contracts to create a transparent, trustless ecosystem for AI-powered food classification. The blockchain layer handles model versioning, community rewards, and sensory feedback validation.
+## Architecture
 
-## 🏗️ Contract Architecture
+### Core Contracts
 
-The system is composed of three primary smart contracts:
+#### 1. Model Governance (`model-governance/`)
+Advanced governance system with:
+- Weighted voting with delegation
+- Timelock execution
+- Emergency proposals
+- Multi-signature admin controls
+- Proposal types (Model Update, Dataset Expansion, Parameter Change, Emergency, Upgrade)
 
-1.  **Model Governance**: Manages proposals for model updates and dataset expansions.
-2.  **Tokenized Incentive**: Handles reward distribution and vesting for contributors.
-3.  **Sensory Evaluation**: Manages community-driven feedback and staking for data validation.
+#### 2. Tokenized Incentive (`tokenized-incentive/`)
+Comprehensive token system with:
+- Multi-tier staking with rewards
+- Reward pools and auto-compounding
+- Vesting schedules with cliffs
+- Multi-signature admin operations
+- Gas-optimized operations
 
-## 🛠️ Development Setup
+#### 3. Sensory Evaluation (`sensory-evaluation/`)
+Reputation-based evaluation system with:
+- Multi-criteria scoring
+- Expert panel verification
+- Reputation tiers (Novice → Grandmaster)
+- Dispute resolution system
+- Quality-based rewards
+
+### Shared Infrastructure
+
+#### Upgradeability (`shared/src/upgradeability.rs`)
+- Proxy pattern implementation
+- Timelock upgrades
+- Upgrade history tracking
+- Emergency pause capabilities
+
+#### Security (`shared/src/security.rs`)
+- Comprehensive audit logging
+- Access control and rate limiting
+- Whitelist/blacklist management
+- Vulnerability reporting
+- Emergency pause/resume
+
+#### Gas Optimization (`shared/src/optimization.rs`)
+- Batch operations
+- Storage optimization patterns
+- Efficient data structures
+- Memory usage optimization
+
+## Features
+
+### 🏛️ Governance Features
+- **Proposal Types**: Model updates, dataset expansion, parameter changes, emergency actions
+- **Voting Mechanisms**: Weighted voting, delegation, voting power snapshots
+- **Timelock Execution**: Configurable delays for proposal execution
+- **Emergency Proposals**: Fast-track for critical updates
+- **Multi-signature**: Enhanced security for admin operations
+
+### 💰 Incentive Features
+- **Staking Tiers**: Bronze, Silver, Gold, Platinum with increasing rewards
+- **Reward Pools**: Configurable pools with different rates and durations
+- **Auto-compounding**: Automatic reward reinvestment
+- **Vesting Schedules**: Cliff and linear vesting options
+- **Dynamic Rewards**: Based on reputation and contribution
+
+### 👨‍🔬 Evaluation Features
+- **Multi-criteria Scoring**: Taste, appearance, texture, aroma, etc.
+- **Reputation System**: 5-tier system with increasing benefits
+- **Expert Verification**: Peer review by qualified experts
+- **Dispute Resolution**: Structured process for contested evaluations
+- **Quality Metrics**: Accuracy and consistency tracking
+
+### 🔒 Security Features
+- **Access Control**: Role-based permissions with multi-sig
+- **Rate Limiting**: Prevent spam and abuse
+- **Audit Logging**: Comprehensive security event tracking
+- **Emergency Controls**: Pause/resume capabilities
+- **Vulnerability Management**: Reporting and resolution tracking
+
+### ⚡ Performance Features
+- **Gas Optimization**: Efficient storage and computation patterns
+- **Batch Operations**: Reduced transaction costs
+- **Caching**: Smart data caching strategies
+- **Event Optimization**: Efficient event emissions
+
+## Quick Start
 
 ### Prerequisites
+- Rust 1.70+
+- Soroban CLI
+- Node.js (for frontend integration)
 
-- **Rust**: [Install Rust](https://www.rust-lang.org/tools/install)
-- **Soroban SDK**: Included in `Cargo.toml`
-- **Stellar CLI**: `cargo install --locked stellar-cli`
-- **Wasm Target**: `rustup target add wasm32-unknown-unknown`
-
-### Building Contracts
-
-To compile all contracts to WASM:
+### Installation
 
 ```bash
+# Clone the repository
+git clone https://github.com/your-org/flavorsnap-contracts
+cd flavorsnap-contracts
+
+# Install dependencies
+cargo build --release --workspace
+```
+
+### Deployment
+
+#### Testnet Deployment
+```bash
+./scripts/deploy_comprehensive.sh testnet
+```
+
+#### Mainnet Deployment
+```bash
+./scripts/deploy_comprehensive.sh mainnet
+```
+
+### Configuration
+
+Create environment configuration files:
+
+`config/testnet.env`:
+```bash
+SOROBAN_SECRET_KEY=your_testnet_secret_key
+SOROBAN_NETWORK_PASSPHRASE="Test SDF Network ; September 2015"
+SOROBAN_RPC_URL="https://soroban-testnet.stellar.org"
+```
+
+`config/mainnet.env`:
+```bash
+SOROBAN_SECRET_KEY=your_mainnet_secret_key
+SOROBAN_NETWORK_PASSPHRASE="Public Global Stellar Network ; September 2015"
+SOROBAN_RPC_URL="https://soroban-rpc.stellar.org"
+```
+
+## Usage Examples
+
+### Model Governance
+
+```rust
+// Submit a proposal
+let proposal_id = governance_contract.submit_proposal(
+    env,
+    proposer,
+    "Update model to v2.0 with improved accuracy",
+    1000, // stake
+    ProposalType::ModelUpdate
+);
+
+// Vote on proposal
+governance_contract.vote(env, voter, proposal_id, true);
+
+// Execute after timelock
+governance_contract.execute_proposal(env, admin, proposal_id);
+```
+
+### Tokenized Incentives
+
+```rust
+// Create staking position
+let stake_id = incentive_contract.create_stake(
+    env,
+    staker,
+    10000, // amount
+    86400 * 30, // 30 days
+    1, // pool ID
+    true // auto-compound
+);
+
+// Claim rewards
+let rewards = incentive_contract.claim_rewards(env, staker, stake_id);
+```
+
+### Sensory Evaluation
+
+```rust
+// Submit evaluation
+let eval_id = evaluation_contract.submit_evaluation(
+    env,
+    evaluator,
+    "food_item_123",
+    scores,
+    "Excellent quality and presentation",
+    95 // confidence
+);
+
+// Verify as expert
+evaluation_contract.verify_evaluation(env, expert, eval_id, true);
+```
+
+## Testing
+
+### Run All Tests
+```bash
+cargo test --workspace
+```
+
+### Comprehensive Integration Tests
+```bash
+cargo test comprehensive_tests --release
+```
+
+### Performance Benchmarks
+```bash
+cargo test performance_benchmarks --release
+```
+
+## Security Considerations
+
+### Audit Checklist
+- [ ] Access control properly configured
+- [ ] Rate limits set appropriately
+- [ ] Emergency pause tested
+- [ ] Upgradeability verified
+- [ ] Multi-signature working
+- [ ] Audit logging enabled
+
+### Security Best Practices
+1. **Multi-signature**: Always use multi-sig for admin operations
+2. **Timelocks**: Configure appropriate delays for critical operations
+3. **Monitoring**: Set up monitoring for security events
+4. **Regular Audits**: Conduct periodic security audits
+5. **Emergency Plans**: Have emergency response procedures
+
+## Gas Optimization Tips
+
+### Storage Optimization
+- Use packed storage for multiple small values
+- Implement efficient caching strategies
+- Minimize storage operations in batches
+
+### Computation Optimization
+- Use lookup tables for expensive calculations
+- Implement efficient sorting algorithms
+- Minimize redundant calculations
+
+### Event Optimization
+- Batch multiple events when possible
+- Use compact binary formats for event data
+- Minimize event emissions for non-critical data
+
+## Upgrade Process
+
+### Standard Upgrade
+1. Propose upgrade with new implementation address
+2. Wait for timelock period (default 24 hours)
+3. Execute upgrade
+4. Verify new implementation
+
+### Emergency Upgrade
+1. Use emergency pause if needed
+2. Propose emergency upgrade
+3. Execute immediately (no timelock)
+4. Resume operations
+
+## Monitoring
+
+### Key Metrics to Monitor
+- Proposal success rate
+- Voting participation
+- Staking ratios
+- Evaluation quality scores
+- Security event frequency
+- Gas usage patterns
+
+### Alert Configuration
+Set up alerts for:
+- High failure rates
+- Unusual voting patterns
+- Security events
+- Gas consumption spikes
+- Emergency pause activations
+
+## Contributing
+
+### Development Setup
+```bash
+# Install development dependencies
+cargo install soroban-cli
+
+# Run tests
+cargo test --workspace
+
+# Build for deployment
 cargo build --target wasm32-unknown-unknown --release
 ```
 
-### Running Tests
+### Code Style
+- Follow Rust standard style guidelines
+- Use comprehensive documentation
+- Include security considerations in comments
+- Write tests for all public functions
 
-Each contract includes a comprehensive test suite. run them using:
+### Security Review Process
+1. Code review by team members
+2. Automated security scanning
+3. Manual security audit
+4. Testnet deployment verification
+5. Mainnet deployment approval
 
-```bash
-cargo test
-```
+## License
 
-## 📦 Contract Modules
+This project is licensed under the MIT License - see the LICENSE file for details.
 
-### Model Governance (`model-governance/`)
+## Support
 
-This contract ensures that only high-quality, community-approved models are used in production.
+For support and questions:
+- Create an issue on GitHub
+- Join our Discord community
+- Contact the development team
 
--   **Proposals**: Users can submit proposals for model updates with metadata links.
--   **Voting**: Token holders vote on proposals based on their stake.
--   **Quorum**: Configurable threshold for proposal approval.
--   **Execution**: Automated state updates upon successful voting rounds.
+## Acknowledgments
 
-### Tokenized Incentive (`tokenized-incentive/`)
-
-Aligns community interests with project growth through a transparent reward system.
-
--   **Mint/Burn**: Controlled token supply management.
--   **Vesting**: Multi-stage vesting schedules for long-term contributors.
--   **Multi-sig**: Critical admin actions (like minting) require multi-signature approval from defined admins.
--   **Action Approvals**: Internal tracking of admin approvals for sensitive operations.
-
-### Sensory Evaluation (`sensory-evaluation/`)
-
-Validates the "sensory" accuracy of food classifications through community staking.
-
--   **Staking**: Users stake tokens to vouch for the accuracy of a classification.
--   **Rewards**: Earn tokens for correct evaluations.
--   **Slashing**: Potential loss of stake for malicious or incorrect reporting (infrastructure-ready).
--   **Admin Management**: Secure management of evaluation parameters.
-
-## 🚀 Deployment
-
-Deployment is managed via the `scripts/deploy_contracts.sh` script.
-
-```bash
-# Deploy to Stellar Testnet
-./scripts/deploy_contracts.sh testnet
-
-# Deploy to Stellar Mainnet
-./scripts/deploy_contracts.sh mainnet
-```
-
-Configurations for different networks are stored in `config/`.
-
-## 🔒 Security Considerations
-
--   **Multi-Signature Admin**: Sensitive operations in `TokenizedIncentive` require multiple admin approvals.
--   **Role-Based Access**: Strict `admin` checks on all state-changing initialization and configuration functions.
--   **Staking Locks**: Tokens are locked during the evaluation period to prevent "nothing-at-stake" attacks.
--   **Data Sanitization**: Metadata strings are stored as Soroban `String` types to minimize on-chain footprint.
+- Soroban team for the excellent smart contract platform
+- Stellar Development Foundation for network infrastructure
+- Community contributors and testers
+- Security auditors and reviewers
 
 ---
 
-*Last updated: March 2026*
-*For more detailed blockchain architecture, see [docs/blockchain.md](../docs/blockchain.md).*
+**Built with ❤️ for the FlavorSnap community**
