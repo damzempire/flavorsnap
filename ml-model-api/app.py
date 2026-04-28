@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, g
 from PIL import Image
 import io
 import os
@@ -16,6 +16,8 @@ from batch_processor import MLBatchProcessor, TaskPriority
 from cache_manager import CacheManager, DistributedCacheManager
 from monitoring import QueueMonitor, console_alert_handler, log_alert_handler
 from persistence import QueuePersistence, create_persistence_backend
+from security_config import init_rate_limiter, add_rate_limit_headers
+from api_endpoints import register_api_endpoints
 
 # Initialize configuration
 config = get_config()
@@ -35,6 +37,15 @@ try:
     logger.info("Database initialized successfully")
 except Exception as e:
     logger.error(f"Failed to initialize database: {e}")
+
+# Initialize rate limiting system
+try:
+    rate_limit_config = get_config_value('rate_limiting', {})
+    rate_limiter = init_rate_limiter(rate_limit_config)
+    logger.info("Rate limiting system initialized successfully")
+except Exception as e:
+    logger.error(f"Failed to initialize rate limiting: {e}")
+    rate_limiter = None
 
 # Initialize queue management components
 try:
@@ -94,6 +105,15 @@ def on_config_change(new_config, old_config):
 
 # Register configuration change callback
 config.add_change_callback(on_config_change)
+
+# Register API endpoints with rate limiting
+register_api_endpoints(app)
+
+# Add rate limit headers to all responses
+@app.after_request
+def after_request(response):
+    """Add rate limit headers to all responses"""
+    return add_rate_limit_headers(response)
 
 @app.route('/health', methods=['GET'])
 def health_check():
@@ -194,120 +214,16 @@ def reload_config():
         logger.error(f"Failed to reload config: {e}")
         return jsonify({'error': str(e)}), 500
 
+# Note: The /predict endpoint is now handled by api_endpoints.py with rate limiting
+# This route is kept for backward compatibility but redirects to the new endpoint
 @app.route('/predict', methods=['POST'])
-def predict():
-    """Food classification prediction endpoint with queue support"""
-    if 'image' not in request.files:
-        return jsonify({'error': 'No image uploaded'}), 400
-
-    file = request.files['image']
-    
-    # Validate file extension
-    allowed_extensions = get_config_value('file_storage.allowed_extensions', ['jpg', 'jpeg', 'png', 'gif', 'bmp'])
-    if file.filename and '.' in file.filename:
-        file_ext = file.filename.rsplit('.', 1)[1].lower()
-        if file_ext not in allowed_extensions:
-            return jsonify({'error': f'File extension not allowed. Allowed: {allowed_extensions}'}), 400
-
-    try:
-        # Generate image hash for caching
-        image_bytes = file.stream.read()
-        file.stream.seek(0)  # Reset stream position
-        image_hash = hashlib.md5(image_bytes).hexdigest()
-        
-        # Check cache first
-        if cache_manager:
-            cached_result = cache_manager.get_cached_prediction(image_hash)
-            if cached_result:
-                logger.info(f"Cache hit for image: {file.filename}")
-                return jsonify({
-                    'label': cached_result['label'],
-                    'confidence': cached_result['confidence'],
-                    'cached': True,
-                    'model_version': get_config_value('app.version', '1.0.0')
-                })
-        
-        # Check if we should use queue processing
-        use_queue = request.form.get('use_queue', 'false').lower() == 'true'
-        priority_str = request.form.get('priority', 'normal')
-        
-        if use_queue and batch_processor:
-            # Submit to queue
-            priority_map = {
-                'low': TaskPriority.LOW,
-                'normal': TaskPriority.NORMAL,
-                'high': TaskPriority.HIGH,
-                'critical': TaskPriority.CRITICAL
-            }
-            priority = priority_map.get(priority_str.lower(), TaskPriority.NORMAL)
-            
-            task_payload = {
-                'image_data': image_bytes,
-                'filename': file.filename,
-                'metadata': {
-                    'content_type': file.content_type,
-                    'file_size': len(image_bytes)
-                }
-            }
-            
-            task_id = batch_processor.submit_task(
-                payload=task_payload,
-                priority=priority,
-                metadata={'filename': file.filename}
-            )
-            
-            # Save to persistence
-            if queue_persistence:
-                from persistence import PersistentTask, TaskStatus
-                persistent_task = PersistentTask(
-                    id=task_id,
-                    priority=priority.value,
-                    status=TaskStatus.PENDING,
-                    payload=task_payload,
-                    created_at=datetime.now(),
-                    metadata={'filename': file.filename}
-                )
-                queue_persistence.save_task(persistent_task)
-            
-            logger.info(f"Task {task_id} submitted to queue with priority {priority.name}")
-            
-            return jsonify({
-                'task_id': task_id,
-                'status': 'queued',
-                'priority': priority.name,
-                'message': 'Task submitted to queue for processing'
-            }), 202
-        
-        # Direct processing (original behavior)
-        logger.info(f"Processing image directly: {file.filename}")
-        
-        image = Image.open(file.stream)
-        
-        # TODO: Implement actual model prediction
-        # model_path = get_config_value('ml_model.model_path')
-        # classes_file = get_config_value('ml_model.classes_file')
-        # input_size = get_config_value('ml_model.input_size', [224, 224])
-        
-        predicted_label = "Moi Moi"  # Dummy output for now
-        confidence = 0.95  # Dummy confidence
-        
-        result = {
-            'label': predicted_label,
-            'confidence': confidence,
-            'model_version': get_config_value('app.version', '1.0.0')
-        }
-        
-        # Cache result
-        if cache_manager:
-            cache_manager.cache_prediction_result(image_hash, result)
-        
-        logger.info(f"Prediction completed: {predicted_label} (confidence: {confidence})")
-        
-        return jsonify(result)
-        
-    except Exception as e:
-        logger.error(f"Prediction failed: {e}")
-        return jsonify({'error': str(e)}), 500
+def predict_legacy():
+    """Legacy prediction endpoint - redirects to new rate-limited endpoint"""
+    return jsonify({
+        'message': 'This endpoint is deprecated. Please use /api/v1/predict instead.',
+        'new_endpoint': '/api/v1/predict',
+        'documentation': 'See API documentation for rate limiting details'
+    }), 301
 
 # Queue management endpoints
 @app.route('/queue/status', methods=['GET'])
@@ -629,6 +545,47 @@ def internal_error(e):
     """Handle internal server error"""
     logger.error(f"Internal server error: {e}")
     return jsonify({'error': 'Internal server error'}), 500
+
+@app.teardown_appcontext
+def teardown_appcontext(exception=None):
+    """Clean up resources when app context ends"""
+    pass
+
+# Register shutdown handlers
+import atexit
+
+def cleanup_resources():
+    """Clean up all resources on shutdown"""
+    logger.info("Cleaning up application resources...")
+    
+    # Shutdown rate limiter
+    if rate_limiter:
+        try:
+            rate_limiter.shutdown()
+            logger.info("Rate limiter shutdown complete")
+        except Exception as e:
+            logger.error(f"Error shutting down rate limiter: {e}")
+    
+    # Shutdown queue monitor
+    if queue_monitor:
+        try:
+            queue_monitor.stop_monitoring()
+            logger.info("Queue monitor shutdown complete")
+        except Exception as e:
+            logger.error(f"Error shutting down queue monitor: {e}")
+    
+    # Shutdown cache manager
+    if cache_manager:
+        try:
+            cache_manager.shutdown()
+            logger.info("Cache manager shutdown complete")
+        except Exception as e:
+            logger.error(f"Error shutting down cache manager: {e}")
+    
+    logger.info("Application cleanup complete")
+
+# Register cleanup function
+atexit.register(cleanup_resources)
 
 if __name__ == '__main__':
     try:
