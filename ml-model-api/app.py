@@ -5,6 +5,14 @@ from PIL import Image
 import io
 import os
 import sys
+
+# Add the parent directory to the path to import config modules
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from config_manager import get_config, get_config_value
+from logger_config import get_logger
+from db_config import db_config, init_database
+
 import hashlib
 from datetime import datetime
 
@@ -154,11 +162,45 @@ def reload_config():
 @tiered_rate_limit('predict')
 @require_api_key
 def predict():
+    """Food classification prediction endpoint"""
     """Food classification prediction endpoint with queue support"""
     if 'image' not in request.files:
         return jsonify({'error': 'No image uploaded'}), 400
 
     file = request.files['image']
+    
+    # Validate file extension
+    allowed_extensions = get_config_value('file_storage.allowed_extensions', ['jpg', 'jpeg', 'png', 'gif', 'bmp'])
+    if file.filename and '.' in file.filename:
+        file_ext = file.filename.rsplit('.', 1)[1].lower()
+        if file_ext not in allowed_extensions:
+            return jsonify({'error': f'File extension not allowed. Allowed: {allowed_extensions}'}), 400
+
+    try:
+        # Log prediction request
+        logger.info(f"Processing image: {file.filename}")
+        
+        # Placeholder for preprocessing & prediction
+        image = Image.open(file.stream)
+        
+        # TODO: Implement actual model prediction
+        # model_path = get_config_value('ml_model.model_path')
+        # classes_file = get_config_value('ml_model.classes_file')
+        # input_size = get_config_value('ml_model.input_size', [224, 224])
+        
+        predicted_label = "Moi Moi"  # Dummy output for now
+        confidence = 0.95  # Dummy confidence
+        
+        logger.info(f"Prediction completed: {predicted_label} (confidence: {confidence})")
+        
+        return jsonify({
+            'label': predicted_label,
+            'confidence': confidence,
+            'model_version': get_config_value('app.version', '1.0.0')
+        })
+        
+    except Exception as e:
+        logger.error(f"Prediction failed: {e}")
     
     # Validate file extension
     allowed_extensions = get_config_value('file_storage.allowed_extensions', ['jpg', 'jpeg', 'png', 'gif', 'bmp'])
@@ -433,6 +475,8 @@ if __name__ == '__main__':
         logger.error(f"Failed to start application: {e}")
         sys.exit(1)
     finally:
+        # Cleanup resources
+        config.cleanup()
         # Cleanup queue management resources
         logger.info("Shutting down queue management components")
         
