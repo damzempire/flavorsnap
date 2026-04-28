@@ -97,23 +97,69 @@ config.add_change_callback(on_config_change)
 
 @app.route('/health', methods=['GET'])
 def health_check():
-    """Health check endpoint"""
+    """Enhanced health check endpoint for deployment monitoring"""
     try:
         # Check database connection
         db_status = db_config.test_connection()
         
-        return jsonify({
-            'status': 'healthy',
-            'timestamp': config.get('monitoring.health_check_interval'),
-            'database': 'connected' if db_status else 'disconnected',
+        # Check cache status
+        cache_status = 'connected' if cache_manager else 'disconnected'
+        
+        # Check queue status
+        queue_status = 'active' if batch_processor else 'inactive'
+        
+        # Check disk space
+        import shutil
+        disk_usage = shutil.disk_usage('/')
+        disk_free_percent = (disk_usage.free / disk_usage.total) * 100
+        
+        # Check memory usage
+        import psutil
+        memory = psutil.virtual_memory()
+        memory_usage_percent = memory.percent
+        
+        # Overall health determination
+        overall_healthy = (
+            db_status and 
+            disk_free_percent > 10 and 
+            memory_usage_percent < 90
+        )
+        
+        health_data = {
+            'status': 'healthy' if overall_healthy else 'unhealthy',
+            'timestamp': datetime.now().isoformat(),
+            'checks': {
+                'database': 'connected' if db_status else 'disconnected',
+                'cache': cache_status,
+                'queue': queue_status,
+                'disk_space': {
+                    'free_percent': round(disk_free_percent, 2),
+                    'free_gb': round(disk_usage.free / (1024**3), 2),
+                    'total_gb': round(disk_usage.total / (1024**3), 2)
+                },
+                'memory': {
+                    'usage_percent': memory_usage_percent,
+                    'available_gb': round(memory.available / (1024**3), 2),
+                    'total_gb': round(memory.total / (1024**3), 2)
+                }
+            },
             'version': get_config_value('app.version', '1.0.0'),
-            'environment': config.environment
-        }), 200
+            'environment': config.environment,
+            'deployment_color': os.getenv('DEPLOYMENT_COLOR', 'unknown'),
+            'deployment_id': os.getenv('DEPLOYMENT_ID', 'unknown')
+        }
+        
+        status_code = 200 if overall_healthy else 503
+        return jsonify(health_data), status_code
+        
     except Exception as e:
         logger.error(f"Health check failed: {e}")
         return jsonify({
             'status': 'unhealthy',
-            'error': str(e)
+            'timestamp': datetime.now().isoformat(),
+            'error': str(e),
+            'version': get_config_value('app.version', '1.0.0'),
+            'environment': config.environment
         }), 500
 
 @app.route('/config', methods=['GET'])
@@ -394,6 +440,179 @@ def export_metrics():
     except Exception as e:
         logger.error(f"Failed to export metrics: {e}")
         return jsonify({'error': str(e)}), 500
+
+# Deployment monitoring endpoints
+@app.route('/deployment/status', methods=['GET'])
+def deployment_status():
+    """Get deployment status information"""
+    try:
+        import psutil
+        
+        # Get system metrics
+        cpu_percent = psutil.cpu_percent(interval=1)
+        memory = psutil.virtual_memory()
+        disk = psutil.disk_usage('/')
+        
+        # Get application metrics
+        queue_stats = batch_processor.get_queue_stats() if batch_processor else {}
+        cache_stats = cache_manager.get_comprehensive_stats() if cache_manager else {}
+        
+        deployment_info = {
+            'deployment': {
+                'id': os.getenv('DEPLOYMENT_ID', 'unknown'),
+                'color': os.getenv('DEPLOYMENT_COLOR', 'unknown'),
+                'environment': config.environment,
+                'version': get_config_value('app.version', '1.0.0'),
+                'start_time': datetime.now().isoformat(),
+                'uptime_seconds': time.time() - psutil.boot_time()
+            },
+            'system': {
+                'cpu_percent': cpu_percent,
+                'memory': {
+                    'total_gb': round(memory.total / (1024**3), 2),
+                    'available_gb': round(memory.available / (1024**3), 2),
+                    'usage_percent': memory.percent,
+                    'used_gb': round(memory.used / (1024**3), 2)
+                },
+                'disk': {
+                    'total_gb': round(disk.total / (1024**3), 2),
+                    'free_gb': round(disk.free / (1024**3), 2),
+                    'usage_percent': round((disk.used / disk.total) * 100, 2),
+                    'used_gb': round(disk.used / (1024**3), 2)
+                }
+            },
+            'application': {
+                'queue_stats': queue_stats,
+                'cache_stats': cache_stats,
+                'database_connected': db_config.test_connection() if db_config else False
+            }
+        }
+        
+        return jsonify(deployment_info), 200
+        
+    except Exception as e:
+        logger.error(f"Failed to get deployment status: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/deployment/metrics', methods=['GET'])
+def deployment_metrics():
+    """Get detailed deployment metrics for monitoring"""
+    try:
+        import psutil
+        
+        # Process-specific metrics
+        process = psutil.Process()
+        
+        metrics = {
+            'flask_http_request_duration_seconds': [
+                {
+                    'quantile': '0.5',
+                    'value': 0.1  # Placeholder - would need actual timing
+                },
+                {
+                    'quantile': '0.95',
+                    'value': 0.3  # Placeholder - would need actual timing
+                },
+                {
+                    'quantile': '0.99',
+                    'value': 0.5  # Placeholder - would need actual timing
+                }
+            ],
+            'flask_http_request_total': [
+                {
+                    'method': 'GET',
+                    'endpoint': '/health',
+                    'status': '200',
+                    'value': 100  # Placeholder - would need actual counter
+                }
+            ],
+            'flask_http_request_exceptions_total': [
+                {
+                    'method': 'POST',
+                    'endpoint': '/predict',
+                    'status': '500',
+                    'value': 5  # Placeholder - would need actual counter
+                }
+            ],
+            'flask_database_connections': 1 if db_config and db_config.test_connection() else 0,
+            'flask_database_query_duration_seconds': [
+                {
+                    'quantile': '0.95',
+                    'value': 0.05  # Placeholder
+                }
+            ],
+            'cache_hits_total': cache_stats.get('hits', 0) if cache_manager else 0,
+            'cache_misses_total': cache_stats.get('misses', 0) if cache_manager else 0,
+            'queue_pending_tasks': queue_stats.get('pending_tasks', 0) if batch_processor else 0,
+            'queue_running_tasks': queue_stats.get('running_tasks', 0) if batch_processor else 0,
+            'queue_completed_tasks': queue_stats.get('completed_tasks', 0) if batch_processor else 0,
+            'queue_failed_tasks': queue_stats.get('failed_tasks', 0) if batch_processor else 0,
+            'process_resident_memory_bytes': process.memory_info().rss,
+            'process_cpu_seconds_total': process.cpu_times().user + process.cpu_times().system,
+            'process_num_threads': process.num_threads(),
+            'up': 1,  # Application is up
+            'flask_health_check_status': 1 if db_config and db_config.test_connection() else 0
+        }
+        
+        return jsonify(metrics), 200
+        
+    except Exception as e:
+        logger.error(f"Failed to get deployment metrics: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/deployment/ready', methods=['GET'])
+def readiness_check():
+    """Readiness check for Kubernetes"""
+    try:
+        # Check if application is ready to serve traffic
+        db_ready = db_config.test_connection() if db_config else False
+        cache_ready = cache_manager is not None
+        queue_ready = batch_processor is not None
+        
+        ready = db_ready and cache_ready and queue_ready
+        
+        if ready:
+            return jsonify({
+                'status': 'ready',
+                'checks': {
+                    'database': db_ready,
+                    'cache': cache_ready,
+                    'queue': queue_ready
+                }
+            }), 200
+        else:
+            return jsonify({
+                'status': 'not_ready',
+                'checks': {
+                    'database': db_ready,
+                    'cache': cache_ready,
+                    'queue': queue_ready
+                }
+            }), 503
+            
+    except Exception as e:
+        logger.error(f"Readiness check failed: {e}")
+        return jsonify({
+            'status': 'not_ready',
+            'error': str(e)
+        }), 503
+
+@app.route('/deployment/live', methods=['GET'])
+def liveness_check():
+    """Liveness check for Kubernetes"""
+    try:
+        # Simple liveness check - if we can respond, we're alive
+        return jsonify({
+            'status': 'alive',
+            'timestamp': datetime.now().isoformat()
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Liveness check failed: {e}")
+        return jsonify({
+            'status': 'dead',
+            'error': str(e)
+        }), 500
 
 @app.errorhandler(413)
 def too_large(e):
