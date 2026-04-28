@@ -4,6 +4,12 @@ Implements comprehensive security scanning, vulnerability detection, and remedia
 """
 import os
 import re
+import json
+import time
+import numpy as np
+from typing import Dict, Any, Optional, List, Tuple
+from flask import request, abort
+from werkzeug.utils import secure_filename
 import hashlib
 import hmac
 import json
@@ -11,11 +17,18 @@ import logging
 import subprocess
 import tempfile
 from datetime import datetime, timedelta
-from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Any
-from PIL import Image
-import io
-from werkzeug.utils import secure_filename
+from collections import defaultdict, deque
+from dataclasses import dataclass
+from enum import Enum
+import logging
+
+try:
+    from anomaly_detection import anomaly_system, AnomalyType
+except Exception:
+    anomaly_system = None
+    AnomalyType = None
+
+logger = logging.getLogger(__name__)
 
 class SecurityConfig:
     """Security configuration class"""
@@ -576,499 +589,517 @@ class SecurityMonitor:
             return True
         return False
 
+# Advanced Security Threat Detection
+class ThreatType(Enum):
+    """Types of security threats"""
+    SQL_INJECTION = "sql_injection"
+    XSS = "xss"
+    PATH_TRAVERSAL = "path_traversal"
+    COMMAND_INJECTION = "command_injection"
+    CSRF = "csrf"
+    BRUTE_FORCE = "brute_force"
+    DDOS = "ddos"
+    DATA_EXFILTRATION = "data_exfiltration"
+    PRIVILEGE_ESCALATION = "privilege_escalation"
+    ANOMALOUS_BEHAVIOR = "anomalous_behavior"
 
-def is_safe_url(url: str) -> bool:
-    if not url:
-        return False
-    if url.startswith(('//', 'http://', 'https://')):
-        return False
-    return True
-
-
-def validate_json_input(data: Dict[str, Any], required_fields: list = None, schema: Dict[str, Any] = None) -> Tuple[bool, Optional[str]]:
-    """Validate and sanitize JSON input data"""
-    is_valid, error_msg, sanitized_data = InputValidator.sanitize_json_input(data, schema)
-
-    if not is_valid:
-        return False, error_msg
-
-    # Check required fields
-    if required_fields:
-        missing = [f for f in required_fields if f not in sanitized_data]
-        if missing:
-            return False, f"Missing required fields: {', '.join(missing)}"
-
-    return True, None
-
-
-class AdvancedSecurityScanner:
-    """Advanced security scanning and vulnerability detection"""
+@dataclass
+class SecurityThreat:
+    """Represents a detected security threat"""
+    id: str
+    threat_type: ThreatType
+    severity: str
+    timestamp: datetime
+    source_ip: str
+    description: str
+    evidence: Dict[str, Any]
+    confidence: float
+    blocked: bool = False
     
-    def __init__(self, app=None):
-        self.app = app
-        self.logger = logging.getLogger(__name__)
-        self.scan_results = {
-            'timestamp': datetime.now().isoformat(),
-            'vulnerabilities': [],
-            'compliance_issues': [],
-            'security_score': 100
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            'id': self.id,
+            'threat_type': self.threat_type.value,
+            'severity': self.severity,
+            'timestamp': self.timestamp.isoformat(),
+            'source_ip': self.source_ip,
+            'description': self.description,
+            'evidence': self.evidence,
+            'confidence': self.confidence,
+            'blocked': self.blocked
         }
-    
-    def run_comprehensive_scan(self) -> Dict[str, Any]:
-        """Run comprehensive security scan"""
-        self.logger.info("Starting comprehensive security scan...")
-        
-        # Dependency vulnerability scan
-        dependency_vulns = self._scan_dependencies()
-        self.scan_results['vulnerabilities'].extend(dependency_vulns)
-        
-        # Code security analysis
-        code_issues = self._scan_code_security()
-        self.scan_results['vulnerabilities'].extend(code_issues)
-        
-        # Configuration compliance check
-        compliance_issues = self._check_compliance()
-        self.scan_results['compliance_issues'].extend(compliance_issues)
-        
-        # Calculate security score
-        self._calculate_security_score()
-        
-        self.logger.info(f"Security scan completed. Score: {self.scan_results['security_score']}")
-        return self.scan_results
-    
-    def _scan_dependencies(self) -> List[Dict[str, Any]]:
-        """Scan for dependency vulnerabilities"""
-        vulnerabilities = []
-        
-        try:
-            # Check Python dependencies with Safety
-            result = subprocess.run(
-                ['python', '-m', 'safety', 'check', '--json'],
-                capture_output=True,
-                text=True,
-                timeout=60
-            )
-            
-            if result.stdout:
-                try:
-                    safety_data = json.loads(result.stdout)
-                    for vuln in safety_data:
-                        vulnerabilities.append({
-                            'type': 'dependency',
-                            'tool': 'safety',
-                            'package': vuln.get('package', 'unknown'),
-                            'version': vuln.get('version', 'unknown'),
-                            'vulnerability_id': vuln.get('vulnerability_id', ''),
-                            'advisory': vuln.get('advisory', ''),
-                            'severity': self._assess_dependency_severity(vuln),
-                            'remediation': f"Upgrade {vuln.get('package', 'unknown')} to safe version"
-                        })
-                except json.JSONDecodeError:
-                    self.logger.warning("Could not parse Safety output")
-                    
-        except subprocess.TimeoutExpired:
-            self.logger.warning("Dependency scan timed out")
-        except subprocess.CalledProcessError as e:
-            self.logger.warning(f"Dependency scan failed: {e}")
-        except FileNotFoundError:
-            self.logger.info("Safety not installed, skipping dependency scan")
-        
-        return vulnerabilities
-    
-    def _scan_code_security(self) -> List[Dict[str, Any]]:
-        """Scan code for security issues"""
-        issues = []
-        
-        try:
-            # Run Bandit static analysis
-            result = subprocess.run(
-                ['python', '-m', 'bandit', '-r', '.', '-f', 'json'],
-                capture_output=True,
-                text=True,
-                timeout=120
-            )
-            
-            if result.stdout:
-                try:
-                    bandit_data = json.loads(result.stdout)
-                    for issue in bandit_data.get('results', []):
-                        issues.append({
-                            'type': 'code_security',
-                            'tool': 'bandit',
-                            'file': issue.get('filename', ''),
-                            'line': issue.get('line_number', 0),
-                            'test_id': issue.get('test_id', ''),
-                            'test_name': issue.get('test_name', ''),
-                            'issue_text': issue.get('issue_text', ''),
-                            'severity': issue.get('issue_severity', 'LOW'),
-                            'confidence': issue.get('issue_confidence', 'LOW'),
-                            'remediation': f"Fix {issue.get('test_name', '')} in {issue.get('filename', '')}:{issue.get('line_number', 0)}"
-                        })
-                except json.JSONDecodeError:
-                    self.logger.warning("Could not parse Bandit output")
-                    
-        except subprocess.TimeoutExpired:
-            self.logger.warning("Code security scan timed out")
-        except subprocess.CalledProcessError as e:
-            self.logger.warning(f"Code security scan failed: {e}")
-        except FileNotFoundError:
-            self.logger.info("Bandit not installed, skipping code security scan")
-        
-        return issues
-    
-    def _check_compliance(self) -> List[Dict[str, Any]]:
-        """Check security compliance"""
-        compliance_issues = []
-        
-        # Check for hardcoded secrets
-        secret_patterns = [
-            (r'password\s*=\s*[\"\\\'][^\"\\\']+[\"\\\']', 'Hardcoded password'),
-            (r'api_key\s*=\s*[\"\\\'][^\"\\\']+[\"\\\']', 'Hardcoded API key'),
-            (r'secret\s*=\s*[\"\\\'][^\"\\\']+[\"\\\']', 'Hardcoded secret'),
-            (r'token\s*=\s*[\"\\\'][^\"\\\']+[\"\\\']', 'Hardcoded token')
-        ]
-        
-        # Scan Python files for secrets
-        for py_file in Path('.').rglob('*.py'):
-            if any(skip in str(py_file) for skip in ['__pycache__', 'venv', '.git']):
-                continue
-                
-            try:
-                content = py_file.read_text()
-                for pattern, description in secret_patterns:
-                    matches = re.findall(pattern, content, re.IGNORECASE)
-                    if matches:
-                        compliance_issues.append({
-                            'type': 'compliance',
-                            'category': 'hardcoded_secrets',
-                            'file': str(py_file),
-                            'issue': description,
-                            'severity': 'HIGH',
-                            'remediation': f"Replace hardcoded secret in {py_file.name} with environment variable"
-                        })
-            except Exception as e:
-                self.logger.warning(f"Could not scan {py_file}: {e}")
-        
-        # Check security headers configuration
-        if not self._verify_security_headers():
-            compliance_issues.append({
-                'type': 'compliance',
-                'category': 'security_headers',
-                'issue': 'Missing or incomplete security headers',
-                'severity': 'MEDIUM',
-                'remediation': 'Configure all required security headers in SecurityConfig.SECURITY_HEADERS'
-            })
-        
-        return compliance_issues
-    
-    def _verify_security_headers(self) -> bool:
-        """Verify security headers are properly configured"""
-        required_headers = set(SecurityConfig.SECURITY_HEADERS.keys())
-        return len(required_headers) >= 7  # Expect at least 7 security headers
-    
-    def _assess_dependency_severity(self, vulnerability: Dict[str, Any]) -> str:
-        """Assess severity of dependency vulnerability"""
-        vuln_id = vulnerability.get('vulnerability_id', '').upper()
-        
-        if 'CVE-' in vuln_id:
-            # CVSS-based assessment (simplified)
-            return 'HIGH'
-        elif vulnerability.get('advisory', '').lower() in ['critical', 'high']:
-            return 'HIGH'
-        else:
-            return 'MEDIUM'
-    
-    def _calculate_security_score(self) -> None:
-        """Calculate overall security score"""
-        score = 100
-        
-        # Deduct points for vulnerabilities
-        for vuln in self.scan_results['vulnerabilities']:
-            severity = vuln.get('severity', 'LOW').upper()
-            if severity == 'CRITICAL':
-                score -= 25
-            elif severity == 'HIGH':
-                score -= 15
-            elif severity == 'MEDIUM':
-                score -= 8
-            elif severity == 'LOW':
-                score -= 3
-        
-        # Deduct points for compliance issues
-        for issue in self.scan_results['compliance_issues']:
-            severity = issue.get('severity', 'LOW').upper()
-            if severity == 'CRITICAL':
-                score -= 20
-            elif severity == 'HIGH':
-                score -= 10
-            elif severity == 'MEDIUM':
-                score -= 5
-            elif severity == 'LOW':
-                score -= 2
-        
-        self.scan_results['security_score'] = max(0, score)
-    
-    def generate_remediation_plan(self) -> Dict[str, Any]:
-        """Generate automated remediation plan"""
-        plan = {
-            'timestamp': datetime.now().isoformat(),
-            'automatable_fixes': [],
-            'manual_review_required': [],
-            'priority_actions': []
-        }
-        
-        # Categorize vulnerabilities
-        for vuln in self.scan_results['vulnerabilities']:
-            if vuln.get('type') == 'dependency' and vuln.get('severity') in ['LOW', 'MEDIUM']:
-                plan['automatable_fixes'].append(vuln)
-            else:
-                plan['manual_review_required'].append(vuln)
-        
-        for issue in self.scan_results['compliance_issues']:
-            if issue.get('category') == 'hardcoded_secrets':
-                plan['priority_actions'].append(issue)
-            else:
-                plan['manual_review_required'].append(issue)
-        
-        return plan
-    
-    def export_report(self, output_path: Optional[str] = None) -> str:
-        """Export security scan report"""
-        if output_path:
-            report_path = Path(output_path)
-        else:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            report_path = Path(f"security_report_{timestamp}.json")
-        
-        report_data = {
-            'scan_metadata': {
-                'timestamp': self.scan_results['timestamp'],
-                'scanner_version': '2.0.0',
-                'security_score': self.scan_results['security_score']
-            },
-            'vulnerabilities': self.scan_results['vulnerabilities'],
-            'compliance_issues': self.scan_results['compliance_issues'],
-            'remediation_plan': self.generate_remediation_plan(),
-            'summary': {
-                'total_vulnerabilities': len(self.scan_results['vulnerabilities']),
-                'total_compliance_issues': len(self.scan_results['compliance_issues']),
-                'security_score': self.scan_results['security_score']
-            }
-        }
-        
-        with open(report_path, 'w') as f:
-            json.dump(report_data, f, indent=2)
-        
-        self.logger.info(f"Security report exported to {report_path}")
-        return str(report_path)
 
-
-class SecurityAuditManager:
-    """Manages security audits and compliance checks"""
+class AdvancedThreatDetector:
+    """Advanced security threat detection system"""
     
     def __init__(self):
-        self.scanner = AdvancedSecurityScanner()
-        self.audit_log = []
-    
-    def run_scheduled_audit(self) -> Dict[str, Any]:
-        """Run scheduled security audit"""
-        self.logger = logging.getLogger(__name__)
-        self.logger.info("Starting scheduled security audit...")
-        
-        # Run comprehensive scan
-        scan_results = self.scanner.run_comprehensive_scan()
-        
-        # Log audit
-        audit_entry = {
-            'timestamp': datetime.now().isoformat(),
-            'type': 'scheduled_audit',
-            'security_score': scan_results['security_score'],
-            'vulnerabilities_found': len(scan_results['vulnerabilities']),
-            'compliance_issues': len(scan_results['compliance_issues'])
+        self.threat_patterns = {
+            ThreatType.SQL_INJECTION: [
+                r'(\bUNION\b.*\bSELECT\b)',
+                r'(\bSELECT\b.*\bFROM\b)',
+                r'(\bDROP\b.*\bTABLE\b)',
+                r'(\bINSERT\b.*\bINTO\b)',
+                r'(\bDELETE\b.*\bFROM\b)',
+                r'(\bUPDATE\b.*\bSET\b)',
+                r'(\'|\"|;|\-\-|\/\*|\*\/)',
+                r'(\bOR\b.*\b1\s*=\s*1\b)',
+                r'(\bAND\b.*\b1\s*=\s*1\b)'
+            ],
+            ThreatType.XSS: [
+                r'(<script[^>]*>.*?</script>)',
+                r'(javascript\s*:)',
+                r'(on\w+\s*=)',
+                r'(<iframe[^>]*>)',
+                r'(alert\s*\()',
+                r'(document\.cookie)',
+                r'(eval\s*\()'
+            ],
+            ThreatType.PATH_TRAVERSAL: [
+                r'(\.\.\/|\.\.\\)',
+                r'(%2e%2e%2f|%2e%2e%5c)',
+                r'(/etc/passwd|/etc/shadow)',
+                r'(/var/log/|/proc/)',
+                r'(\/windows\/system32\/)'
+            ],
+            ThreatType.COMMAND_INJECTION: [
+                r'(;|\&\&|\|\||`|\$\(|\$\{)',
+                r'(\bcat\b|\bls\b|\bdir\b)',
+                r'(\bwhoami\b|\bid\b)',
+                r'(\bping\b|\bnslookup\b)',
+                r'(\bnc\b|\bnetcat\b)'
+            ]
         }
-        self.audit_log.append(audit_entry)
         
-        # Generate alerts for critical issues
-        critical_issues = [v for v in scan_results['vulnerabilities'] if v.get('severity') == 'CRITICAL']
-        if critical_issues:
-            self._send_security_alert(critical_issues)
+        self.ip_reputation = defaultdict(float)
+        self.request_patterns = defaultdict(lambda: deque(maxlen=100))
+        self.failed_attempts = defaultdict(lambda: deque(maxlen=50))
+        self.blocked_ips = set()
+        self.threat_history = deque(maxlen=1000)
         
-        return scan_results
+        # Behavioral baselines
+        self.baseline_request_rate = 10.0  # requests per minute
+        self.baseline_payload_size = 1024  # bytes
+        self.baseline_response_time = 0.5  # seconds
     
-    def _send_security_alert(self, critical_issues: List[Dict[str, Any]]) -> None:
-        """Send security alert for critical issues"""
-        alert_message = f"🚨 CRITICAL SECURITY ALERT\n\n"
-        alert_message += f"Found {len(critical_issues)} critical security vulnerabilities:\n\n"
+    def analyze_request(self, request_data: Dict[str, Any]) -> List[SecurityThreat]:
+        """Analyze incoming request for security threats"""
+        threats = []
+        ip_address = request_data.get('ip_address', 'unknown')
         
-        for i, issue in enumerate(critical_issues[:5], 1):
-            alert_message += f"{i}. {issue.get('issue_text', 'Unknown issue')}\n"
-            alert_message += f"   File: {issue.get('file', 'Unknown')}\n"
-            alert_message += f"   Tool: {issue.get('tool', 'Unknown')}\n\n"
+        try:
+            # Check if IP is blocked
+            if ip_address in self.blocked_ips:
+                threats.append(SecurityThreat(
+                    id=f"blocked_ip_{int(time.time())}",
+                    threat_type=ThreatType.ANOMALOUS_BEHAVIOR,
+                    severity="high",
+                    timestamp=datetime.now(),
+                    source_ip=ip_address,
+                    description="Request from blocked IP address",
+                    evidence={'blocked_ip': True},
+                    confidence=1.0,
+                    blocked=True
+                ))
+                return threats
+            
+            # Pattern-based detection
+            pattern_threats = self._detect_pattern_attacks(request_data, ip_address)
+            threats.extend(pattern_threats)
+            
+            # Behavioral anomaly detection
+            behavioral_threats = self._detect_behavioral_anomalies(request_data, ip_address)
+            threats.extend(behavioral_threats)
+            
+            # Rate-based detection
+            rate_threats = self._detect_rate_based_attacks(request_data, ip_address)
+            threats.extend(rate_threats)
+            
+            # Data exfiltration detection
+            exfil_threats = self._detect_data_exfiltration(request_data, ip_address)
+            threats.extend(exfil_threats)
+            
+            # Update threat history
+            for threat in threats:
+                self.threat_history.append(threat)
+            
+            # Trigger anomaly detection if available
+            if anomaly_system and threats:
+                security_data = {
+                    'ip_address': ip_address,
+                    'request_data': str(request_data.get('request_body', '')),
+                    'threat_count': len(threats),
+                    'high_severity_count': len([t for t in threats if t.severity == 'high']),
+                    'endpoint': request_data.get('endpoint', ''),
+                    'failed_login': any('login' in request_data.get('endpoint', '').lower() and 
+                                      request_data.get('status_code', 200) >= 400 for _ in [1])
+                }
+                anomalies = anomaly_system.detect_anomalies(security_data)
+                if anomalies:
+                    for anomaly in anomalies:
+                        threats.append(SecurityThreat(
+                            id=f"anomaly_{anomaly.id}",
+                            threat_type=ThreatType.ANOMALOUS_BEHAVIOR,
+                            severity="medium",
+                            timestamp=anomaly.timestamp,
+                            source_ip=ip_address,
+                            description=f"Anomaly detected: {anomaly.description}",
+                            evidence={'anomaly': anomaly.to_dict()},
+                            confidence=anomaly.confidence
+                        ))
+            
+            # Auto-block high confidence threats
+            self._auto_block_threats(threats, ip_address)
+            
+        except Exception as e:
+            logger.error(f"Threat detection error: {e}")
         
-        if len(critical_issues) > 5:
-            alert_message += f"... and {len(critical_issues) - 5} more critical issues\n\n"
-        
-        alert_message += "IMMEDIATE ACTION REQUIRED!\n"
-        alert_message += "Please review and address these critical security vulnerabilities."
-        
-        self.logger.critical(alert_message)
-        
-        # Here you could integrate with notification systems
-        # e.g., Slack, email, PagerDuty, etc.
-
-
-# Import new security components
-from oauth2_handler import oauth2_handler
-from jwt_handler import jwt_token_manager
-from threat_protection import threat_protection
-
-# Initialize global security scanner
-security_scanner = AdvancedSecurityScanner()
-audit_manager = SecurityAuditManager()
-
-# Enhanced security configuration with new components
-class EnhancedSecurityConfig:
-    """Enhanced security configuration integrating OAuth2, JWT, and threat protection"""
+        return threats
     
-    @staticmethod
-    def initialize_security(app):
-        """Initialize all security components"""
-        # Initialize OAuth2 handler
-        oauth2_handler.init_app(app)
+    def _detect_pattern_attacks(self, request_data: Dict[str, Any], ip_address: str) -> List[SecurityThreat]:
+        """Detect pattern-based attacks"""
+        threats = []
         
-        # Initialize JWT token manager
-        jwt_token_manager.init_app(app)
+        # Extract request data
+        request_body = request_data.get('request_body', '')
+        query_params = request_data.get('query_params', '')
+        headers = str(request_data.get('headers', {}))
+        user_agent = request_data.get('user_agent', '')
         
-        # Initialize threat protection
-        threat_protection.init_app(app)
+        # Combine all text data for analysis
+        combined_text = f"{request_body} {query_params} {headers} {user_agent}".lower()
         
-        # Configure security middleware
-        security_middleware = SecurityMiddleware(app)
-        security_monitor = SecurityMonitor(app)
+        for threat_type, patterns in self.threat_patterns.items():
+            for pattern in patterns:
+                try:
+                    matches = re.findall(pattern, combined_text, re.IGNORECASE)
+                    if matches:
+                        threats.append(SecurityThreat(
+                            id=f"{threat_type.value}_{int(time.time())}",
+                            threat_type=threat_type,
+                            severity="high",
+                            timestamp=datetime.now(),
+                            source_ip=ip_address,
+                            description=f"{threat_type.value.replace('_', ' ').title()} attack detected",
+                            evidence={
+                                'pattern': pattern,
+                                'matches': matches[:3],  # Limit to first 3 matches
+                                'location': self._find_attack_location(request_data, pattern)
+                            },
+                            confidence=min(0.9, len(matches) * 0.3)
+                        ))
+                        break  # One threat per type per request
+                except Exception as e:
+                    logger.warning(f"Pattern matching error for {threat_type}: {e}")
         
-        # Schedule periodic tasks
-        EnhancedSecurityConfig._schedule_security_tasks(app)
-        
-        app.logger.info("Enhanced security system initialized")
+        return threats
     
-    @staticmethod
-    def _schedule_security_tasks(app):
-        """Schedule periodic security tasks"""
-        # In a real implementation, you would use a scheduler like Celery
-        # For now, we'll define the tasks that should be scheduled
+    def _find_attack_location(self, request_data: Dict[str, Any], pattern: str) -> str:
+        """Find where the attack pattern was detected"""
+        locations = []
         
-        def cleanup_tokens():
-            """Clean up expired tokens"""
-            jwt_token_manager.cleanup_expired_tokens()
-            oauth2_handler.cleanup_expired_tokens()
+        for key, value in request_data.items():
+            if isinstance(value, str) and re.search(pattern, value, re.IGNORECASE):
+                locations.append(key)
         
-        def cleanup_threat_events():
-            """Clean up old threat events"""
-            threat_protection.cleanup_old_events()
-        
-        def rotate_keys():
-            """Rotate JWT keys"""
-            jwt_token_manager.rotate_keys()
-        
-        def run_security_scan():
-            """Run periodic security scan"""
-            audit_manager.run_scheduled_audit()
-        
-        # These would be scheduled to run periodically
-        # cleanup_tokens() - every hour
-        # cleanup_threat_events() - every day
-        # rotate_keys() - every week
-        # run_security_scan() - every day
+        return ', '.join(locations) if locations else 'unknown'
     
-    @staticmethod
-    def get_security_status() -> Dict[str, Any]:
-        """Get comprehensive security status"""
-        return {
-            'oauth2': {
-                'active_clients': len(oauth2_handler.clients),
-                'active_tokens': len(oauth2_handler.tokens),
-                'active_codes': len(oauth2_handler.authorization_codes)
-            },
-            'jwt': jwt_token_manager.get_statistics(),
-            'threat_protection': {
-                'blocked_ips': len(threat_protection.blocked_ips),
-                'threat_events': len(threat_protection.threat_events),
-                'metrics': threat_protection.get_threat_metrics()
-            },
-            'security_scanner': {
-                'last_scan': security_scanner.scan_results.get('timestamp'),
-                'security_score': security_scanner.scan_results.get('security_score'),
-                'vulnerabilities': len(security_scanner.scan_results.get('vulnerabilities', [])),
-                'compliance_issues': len(security_scanner.scan_results.get('compliance_issues', []))
-            }
-        }
-    
-    @staticmethod
-    def validate_request_security(request) -> Tuple[bool, Optional[str], Optional[Dict[str, Any]]]:
-        """Comprehensive request security validation"""
-        errors = []
-        warnings = []
+    def _detect_behavioral_anomalies(self, request_data: Dict[str, Any], ip_address: str) -> List[SecurityThreat]:
+        """Detect behavioral anomalies"""
+        threats = []
+        current_time = datetime.now()
         
-        # Validate OAuth2/JWT token if present
-        auth_header = request.headers.get('Authorization')
-        if auth_header:
-            if auth_header.startswith('Bearer '):
-                token = auth_header[7:]
+        # Track request patterns
+        self.request_patterns[ip_address].append({
+            'timestamp': current_time,
+            'endpoint': request_data.get('endpoint', ''),
+            'method': request_data.get('method', ''),
+            'payload_size': len(str(request_data.get('request_body', ''))),
+            'user_agent': request_data.get('user_agent', ''),
+            'status_code': request_data.get('status_code', 200)
+        })
+        
+        # Analyze patterns
+        recent_requests = list(self.request_patterns[ip_address])
+        if len(recent_requests) >= 10:
+            # Check for unusual endpoint access
+            endpoints = [r['endpoint'] for r in recent_requests]
+            unique_endpoints = len(set(endpoints))
+            if unique_endpoints > len(recent_requests) * 0.8:  # 80% unique endpoints
+                threats.append(SecurityThreat(
+                    id=f"endpoint_scan_{int(time.time())}",
+                    threat_type=ThreatType.ANOMALOUS_BEHAVIOR,
+                    severity="medium",
+                    timestamp=current_time,
+                    source_ip=ip_address,
+                    description="Potential endpoint scanning detected",
+                    evidence={
+                        'unique_endpoints': unique_endpoints,
+                        'total_requests': len(recent_requests),
+                        'endpoints': list(set(endpoints))[:5]
+                    },
+                    confidence=0.7
+                ))
+            
+            # Check for unusual user agent changes
+            user_agents = [r['user_agent'] for r in recent_requests if r['user_agent']]
+            if len(set(user_agents)) > 3:
+                threats.append(SecurityThreat(
+                    id=f"ua_rotation_{int(time.time())}",
+                    threat_type=ThreatType.ANOMALOUS_BEHAVIOR,
+                    severity="medium",
+                    timestamp=current_time,
+                    source_ip=ip_address,
+                    description="User agent rotation detected",
+                    evidence={
+                        'unique_user_agents': len(set(user_agents)),
+                        'user_agents': list(set(user_agents))[:3]
+                    },
+                    confidence=0.6
+                ))
+            
+            # Check for payload size anomalies
+            payload_sizes = [r['payload_size'] for r in recent_requests]
+            avg_payload = np.mean(payload_sizes)
+            if avg_payload > self.baseline_payload_size * 10:  # 10x larger than baseline
+                threats.append(SecurityThreat(
+                    id=f"large_payload_{int(time.time())}",
+                    threat_type=ThreatType.DATA_EXFILTRATION,
+                    severity="high",
+                    timestamp=current_time,
+                    source_ip=ip_address,
+                    description="Unusually large payload detected",
+                    evidence={
+                        'avg_payload_size': avg_payload,
+                        'baseline_size': self.baseline_payload_size,
+                        'max_payload': max(payload_sizes)
+                    },
+                    confidence=0.8
+                ))
+        
+        return threats
+    
+    def _detect_rate_based_attacks(self, request_data: Dict[str, Any], ip_address: str) -> List[SecurityThreat]:
+        """Detect rate-based attacks"""
+        threats = []
+        current_time = datetime.now()
+        
+        # Track failed attempts
+        status_code = request_data.get('status_code', 200)
+        if status_code >= 400:
+            self.failed_attempts[ip_address].append(current_time)
+        
+        # Check for brute force
+        recent_failures = [
+            t for t in self.failed_attempts[ip_address]
+            if current_time - t < timedelta(minutes=15)
+        ]
+        
+        if len(recent_failures) > 20:  # 20 failures in 15 minutes
+            threats.append(SecurityThreat(
+                id=f"brute_force_{int(time.time())}",
+                threat_type=ThreatType.BRUTE_FORCE,
+                severity="high",
+                timestamp=current_time,
+                source_ip=ip_address,
+                description="Brute force attack detected",
+                evidence={
+                    'failure_count': len(recent_failures),
+                    'time_window': '15 minutes'
+                },
+                confidence=0.9
+            ))
+        
+        # Check for DDoS patterns
+        recent_requests = [
+            r for r in self.request_patterns[ip_address]
+            if current_time - r['timestamp'] < timedelta(minutes=1)
+        ]
+        
+        if len(recent_requests) > 100:  # More than 100 requests per minute
+            threats.append(SecurityThreat(
+                id=f"ddos_{int(time.time())}",
+                threat_type=ThreatType.DDOS,
+                severity="critical",
+                timestamp=current_time,
+                source_ip=ip_address,
+                description="Potential DDoS attack detected",
+                evidence={
+                    'requests_per_minute': len(recent_requests),
+                    'baseline_rate': self.baseline_request_rate
+                },
+                confidence=0.8
+            ))
+        
+        return threats
+    
+    def _detect_data_exfiltration(self, request_data: Dict[str, Any], ip_address: str) -> List[SecurityThreat]:
+        """Detect data exfiltration patterns"""
+        threats = []
+        
+        # Check for large response sizes
+        response_size = request_data.get('response_size', 0)
+        if response_size > 1024 * 1024:  # 1MB
+            threats.append(SecurityThreat(
+                id=f"large_response_{int(time.time())}",
+                threat_type=ThreatType.DATA_EXFILTRATION,
+                severity="medium",
+                timestamp=datetime.now(),
+                source_ip=ip_address,
+                description="Large response detected - potential data exfiltration",
+                evidence={
+                    'response_size': response_size,
+                    'endpoint': request_data.get('endpoint', '')
+                },
+                confidence=0.6
+            ))
+        
+        # Check for suspicious endpoints
+        endpoint = request_data.get('endpoint', '').lower()
+        suspicious_endpoints = ['/export', '/download', '/backup', '/dump', '/admin']
+        for suspicious in suspicious_endpoints:
+            if suspicious in endpoint:
+                threats.append(SecurityThreat(
+                    id=f"suspicious_endpoint_{int(time.time())}",
+                    threat_type=ThreatType.PRIVILEGE_ESCALATION,
+                    severity="high",
+                    timestamp=datetime.now(),
+                    source_ip=ip_address,
+                    description=f"Access to suspicious endpoint: {endpoint}",
+                    evidence={'endpoint': endpoint},
+                    confidence=0.7
+                ))
+                break
+        
+        return threats
+    
+    def _auto_block_threats(self, threats: List[SecurityThreat], ip_address: str):
+        """Automatically block threats based on confidence and severity"""
+        for threat in threats:
+            if (threat.confidence > 0.8 and 
+                threat.severity in ['high', 'critical'] and 
+                threat.threat_type not in [ThreatType.ANOMALOUS_BEHAVIOR]):
                 
-                # Try JWT validation first
-                is_valid, payload, error = jwt_token_manager.validate_token(token)
-                if is_valid:
-                    # Token is valid JWT
-                    pass
-                else:
-                    # Try OAuth2 validation
-                    token_obj = oauth2_handler.validate_access_token(token)
-                    if token_obj:
-                        # Token is valid OAuth2
-                        pass
-                    else:
-                        errors.append(f"Invalid authentication token: {error}")
+                self.blocked_ips.add(ip_address)
+                threat.blocked = True
+                
+                logger.warning(f"Auto-blocked IP {ip_address} due to {threat.threat_type.value}")
+                
+                # Add to IP reputation system
+                self.ip_reputation[ip_address] -= 0.5
+    
+    def get_security_dashboard(self) -> Dict[str, Any]:
+        """Get security dashboard data"""
+        current_time = datetime.now()
+        recent_threats = [
+            t for t in self.threat_history 
+            if current_time - t.timestamp < timedelta(hours=24)
+        ]
         
-        # Check threat protection
-        ip_address = request.remote_addr
-        if ip_address in threat_protection.blocked_ips:
-            errors.append("IP address is blocked")
+        # Calculate threat statistics
+        threat_counts = defaultdict(int)
+        severity_counts = defaultdict(int)
         
-        # Validate request size
-        content_length = request.content_length or 0
-        if content_length > SecurityConfig.MAX_CONTENT_LENGTH:
-            errors.append(f"Request too large: {content_length} bytes")
+        for threat in recent_threats:
+            threat_counts[threat.threat_type.value] += 1
+            severity_counts[threat.severity] += 1
         
-        # Validate content type
-        if request.content_type and request.content_type not in SecurityConfig.ALLOWED_MIME_TYPES:
-            if not request.content_type.startswith('application/json'):
-                warnings.append(f"Unusual content type: {request.content_type}")
+        # Calculate risk score
+        risk_score = 0
+        for severity, count in severity_counts.items():
+            if severity == 'critical':
+                risk_score += count * 25
+            elif severity == 'high':
+                risk_score += count * 15
+            elif severity == 'medium':
+                risk_score += count * 10
+            elif severity == 'low':
+                risk_score += count * 5
         
-        return len(errors) == 0, '; '.join(errors) if errors else None, {
-            'warnings': warnings,
-            'threat_score': getattr(request, 'threat_score', 0)
+        risk_score = min(100, risk_score)
+        
+        return {
+            'summary': {
+                'total_threats': len(recent_threats),
+                'blocked_ips': len(self.blocked_ips),
+                'risk_score': risk_score,
+                'risk_level': 'low' if risk_score < 30 else 'medium' if risk_score < 70 else 'high'
+            },
+            'threat_breakdown': dict(threat_counts),
+            'severity_breakdown': dict(severity_counts),
+            'recent_threats': [t.to_dict() for t in recent_threats[-10:]],  # Last 10 threats
+            'top_source_ips': self._get_top_source_ips(recent_threats),
+            'trends': self._calculate_threat_trends(recent_threats)
         }
+    
+    def _get_top_source_ips(self, threats: List[SecurityThreat], limit: int = 5) -> List[Dict[str, Any]]:
+        """Get top source IPs by threat count"""
+        ip_counts = defaultdict(int)
+        ip_threats = defaultdict(list)
+        
+        for threat in threats:
+            ip_counts[threat.source_ip] += 1
+            ip_threats[threat.source_ip].append(threat)
+        
+        top_ips = sorted(ip_counts.items(), key=lambda x: x[1], reverse=True)[:limit]
+        
+        return [
+            {
+                'ip': ip,
+                'threat_count': count,
+                'blocked': ip in self.blocked_ips,
+                'reputation_score': self.ip_reputation.get(ip, 0.0),
+                'last_seen': max([t.timestamp for t in ip_threats[ip]]).isoformat()
+            }
+            for ip, count in top_ips
+        ]
+    
+    def _calculate_threat_trends(self, threats: List[SecurityThreat]) -> Dict[str, Any]:
+        """Calculate threat trends over time"""
+        if len(threats) < 2:
+            return {'trend': 'insufficient_data'}
+        
+        # Group threats by hour
+        hourly_counts = defaultdict(int)
+        for threat in threats:
+            hour = threat.timestamp.replace(minute=0, second=0, microsecond=0)
+            hourly_counts[hour] += 1
+        
+        if len(hourly_counts) < 2:
+            return {'trend': 'insufficient_data'}
+        
+        # Calculate trend
+        sorted_hours = sorted(hourly_counts.keys())
+        recent_count = hourly_counts[sorted_hours[-1]]
+        previous_count = hourly_counts[sorted_hours[-2]] if len(sorted_hours) > 1 else 0
+        
+        if recent_count > previous_count * 1.5:
+            trend = 'increasing'
+        elif recent_count < previous_count * 0.5:
+            trend = 'decreasing'
+        else:
+            trend = 'stable'
+        
+        return {
+            'trend': trend,
+            'recent_hourly_count': recent_count,
+            'previous_hourly_count': previous_count,
+            'hourly_breakdown': {hour.isoformat(): count for hour, count in hourly_counts.items()}
+        }
+    
+    def unblock_ip(self, ip_address: str) -> bool:
+        """Unblock an IP address"""
+        if ip_address in self.blocked_ips:
+            self.blocked_ips.remove(ip_address)
+            self.ip_reputation[ip_address] = max(0.0, self.ip_reputation.get(ip_address, 0.0) + 0.2)
+            logger.info(f"Unblocked IP: {ip_address}")
+            return True
+        return False
+    
+    def update_reputation(self, ip_address: str, delta: float):
+        """Update IP reputation score"""
+        current_score = self.ip_reputation.get(ip_address, 0.0)
+        new_score = max(-1.0, min(1.0, current_score + delta))
+        self.ip_reputation[ip_address] = new_score
 
-
-class SecurityConfig:
-    """
-    Central security configuration for encryption system.
-    """
-
-    # Encryption algorithm
-    ALGORITHM = "AES-256-GCM"
-
-    # Key sizes
-    KEY_SIZE = 32  # 256 bits
-
-    # Key rotation interval (days)
-    KEY_ROTATION_DAYS = 30
-
-    # Environment-based secret storage (fallback only for dev)
-    MASTER_KEY = os.getenv("MASTER_KEY", None)
-
-    # Enable encryption monitoring
-    ENABLE_AUDIT_LOGS = True
-
-    # Performance tuning
-    CHUNK_SIZE = 64 * 1024  # 64KB streaming encryption
+# Global threat detector instance
+threat_detector = AdvancedThreatDetector()
