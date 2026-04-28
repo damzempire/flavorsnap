@@ -18,8 +18,9 @@
     "next": "15.3.3",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "next-i18next": "^15.3.3"
-
+    "next": "15.3.3",
+    "axios": "^1.6.2",
+    "lucide-react": "^0.294.0"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",
